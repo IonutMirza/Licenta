@@ -10,7 +10,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-//import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.auth.FirebaseAuth
 
 @Composable
 fun HomePage(
@@ -19,15 +19,14 @@ fun HomePage(
     onNavigateToSwitchPage: () -> Unit,
     onNavigateToWalletPage: () -> Unit
 ) {
-    //val auth = FirebaseAuth.getInstance()
-    //val user = auth.currentUser
-    // val displayName = user?.displayName ?: user?.email?.split("@")?.get(0) ?: "User" // Extrage numele din email
+    val user = FirebaseAuth.getInstance().currentUser
+    val displayName = user?.email ?: "User"
 
     Column(
         modifier = Modifier
             .fillMaxSize()
             .padding(24.dp),
-        verticalArrangement = Arrangement.Top,
+        verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
             Text(
@@ -43,6 +42,13 @@ fun HomePage(
                 fontWeight = FontWeight.Medium,
                 color = Color.Gray
             )
+        Text("Welcome, $displayName!", fontSize = 24.sp, fontWeight = FontWeight.Bold)
+        Spacer(modifier = Modifier.height(16.dp))
+
+        Button(onClick = onLogout) {
+            Text("Log Out")
+        }
+
         }
         Column(
             modifier = Modifier

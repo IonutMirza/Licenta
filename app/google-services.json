@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "1089185010274",
+    "project_id": "licenta-4f8c9",
+    "storage_bucket": "licenta-4f8c9.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:1089185010274:android:f6bb33a920830de3b5f73b",
+        "android_client_info": {
+          "package_name": "com.example.licenta"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDgAC3QnFJJb32Lj4x652wfUeCHyaoXFVM"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

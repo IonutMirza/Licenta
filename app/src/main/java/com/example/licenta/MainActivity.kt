@@ -7,11 +7,11 @@ import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
-import androidx.activity.enableEdgeToEdge
+//import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.Scaffold
+//import androidx.compose.foundation.layout.fillMaxSize
+//import androidx.compose.foundation.layout.padding
+//import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -24,6 +24,9 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.core.content.ContextCompat
 import com.example.licenta.ui.theme.LicentaTheme
+import com.google.firebase.Firebase
+import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.initialize
 
 @Composable
 fun RequestLocationPermission(onPermissionGranted: () -> Unit) {
@@ -34,7 +37,11 @@ fun RequestLocationPermission(onPermissionGranted: () -> Unit) {
         if (isGranted) {
             onPermissionGranted()
         } else {
-            Toast.makeText(context, "Location permission is required to show your position.", Toast.LENGTH_LONG).show()
+            Toast.makeText(
+                context,
+                "Location permission is required to show your position.",
+                Toast.LENGTH_LONG
+            ).show()
         }
     }
 
@@ -50,38 +57,28 @@ fun RequestLocationPermission(onPermissionGranted: () -> Unit) {
 }
 
 class MainActivity : ComponentActivity() {
+    private lateinit var auth: FirebaseAuth
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        //enableEdgeToEdge()
-        setContent {
-            var currentScreen by remember { mutableStateOf("signUp") }
 
+        Firebase.initialize(this) // Inițializează Firebase
+        auth = FirebaseAuth.getInstance()
+
+        setContent {
+            var currentScreen by remember { mutableStateOf(if (auth.currentUser != null) "home" else "signUp") }
+
+            // Navigare între ecrane
             when (currentScreen) {
                 "signUp" -> SignUpPage(onNavigateToHomePage = { currentScreen = "home" })
                 "home" -> HomePage(
-                    onNavigateToMapPage = { currentScreen = "map" },
-                    onNavigateToSwitchPage = { currentScreen = "switch" },
-                    onNavigateToWalletPage = { currentScreen = "wallet" },
                     onLogout = {
-                        // Deconectează utilizatorul și redirecționează-l pe pagina de logare
-                        //auth.signOut()
+                        auth.signOut()
                         currentScreen = "signUp"
-                    }
-                )
-                "map" -> MapPage(
-                    onNavigateBack = { currentScreen = "home" },
+                    },
+                    onNavigateToMapPage = { currentScreen = "map" },
                     onNavigateToSwitchPage = { currentScreen = "switch" },
                     onNavigateToWalletPage = { currentScreen = "wallet" }
-                )
-                "switch" -> SwitchPage(
-                    onNavigateBack = { currentScreen = "home" },
-                    onNavigateToMapPage = { currentScreen = "map" },
-                    onNavigateToWalletPage = { currentScreen = "wallet" }
-                )
-                "wallet" -> WalletPage(
-                    onNavigateBack = { currentScreen = "home" },
-                    onNavigateToMapPage = { currentScreen = "map" },
-                    onNavigateToSwitchPage = { currentScreen = "switch" }
                 )
             }
         }
