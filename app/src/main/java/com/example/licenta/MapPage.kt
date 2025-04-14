@@ -1,6 +1,5 @@
 package com.example.licenta
 
-
 import android.annotation.SuppressLint
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*

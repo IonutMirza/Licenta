@@ -26,7 +26,7 @@ fun HomePage(
         modifier = Modifier
             .fillMaxSize()
             .padding(24.dp),
-        verticalArrangement = Arrangement.Center,
+        verticalArrangement = Arrangement.Top,
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
             Text(
@@ -36,18 +36,13 @@ fun HomePage(
                 modifier = Modifier.padding(top = 16.dp)
             )
             Spacer(modifier = Modifier.height(16.dp))
-            Text(
-                text = "Hi, bro",
-                fontSize = 24.sp,
-                fontWeight = FontWeight.Medium,
-                color = Color.Gray
-            )
-        Text("Welcome, $displayName!", fontSize = 24.sp, fontWeight = FontWeight.Bold)
+        val username = displayName.substringBefore("@")
+        Text("Welcome, $username!", fontSize = 24.sp, fontWeight = FontWeight.Bold)
         Spacer(modifier = Modifier.height(16.dp))
 
-        Button(onClick = onLogout) {
+       /* Button(onClick = onLogout) {
             Text("Log Out")
-        }
+        }*/
 
         }
         Column(
