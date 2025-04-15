@@ -12,6 +12,11 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.Licenta"
         tools:targetApi="31">
+
+        <meta-data
+        android:name="com.google.android.geo.API_KEY"
+        android:value="AIzaSyBX1B69iOAd1sAt941gh5rnB2M8vRbUEPA" />
+
         <activity
             android:name=".MainActivity"
             android:exported="true"
@@ -24,5 +29,10 @@
             </intent-filter>
         </activity>
     </application>
+
+    <!-- Permisiunile trebuie să fie în afara tag-ului <application> -->
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.INTERNET" />
 
 </manifest>

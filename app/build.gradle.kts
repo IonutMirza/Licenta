@@ -41,6 +41,13 @@ android {
 }
 
 dependencies {
+    // Googlemaps
+    implementation("com.google.maps.android:maps-compose:4.1.1")
+    implementation("com.google.android.gms:play-services-maps:18.2.0")
+    implementation("com.google.android.gms:play-services-location:21.0.1")
+    implementation ("com.google.android.libraries.places:places:2.7.0")
+    implementation ("com.google.android.gms:play-services-maps:17.0.0")
+
     // Firebase platform BOM
     implementation(platform("com.google.firebase:firebase-bom:33.10.0"))
 

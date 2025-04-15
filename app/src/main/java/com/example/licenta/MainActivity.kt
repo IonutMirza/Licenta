@@ -1,62 +1,24 @@
 package com.example.licenta
 
-import android.Manifest
-import android.content.pm.PackageManager
-import android.content.Intent
 import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
-import androidx.compose.ui.Modifier
+import androidx.compose.runtime.*
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.tooling.preview.Preview
 import androidx.core.content.ContextCompat
 import com.example.licenta.ui.theme.LicentaTheme
 import com.google.android.gms.auth.api.signin.GoogleSignIn
 import com.google.android.gms.auth.api.signin.GoogleSignInClient
 import com.google.android.gms.auth.api.signin.GoogleSignInOptions
 import com.google.android.gms.common.api.ApiException
-import com.google.firebase.Firebase
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.GoogleAuthProvider
+import com.google.firebase.Firebase
 import com.google.firebase.initialize
-
-@Composable
-fun RequestLocationPermission(onPermissionGranted: () -> Unit) {
-    val context = LocalContext.current
-    val permissionLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.RequestPermission()
-    ) { isGranted ->
-        if (isGranted) {
-            onPermissionGranted()
-        } else {
-            Toast.makeText(
-                context,
-                "Location permission is required to show your position.",
-                Toast.LENGTH_LONG
-            ).show()
-        }
-    }
-
-    if (ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION)
-        == PackageManager.PERMISSION_GRANTED
-    ) {
-        onPermissionGranted()
-    } else {
-        LaunchedEffect(Unit) {
-            permissionLauncher.launch(Manifest.permission.ACCESS_FINE_LOCATION)
-        }
-    }
-}
+import com.google.android.libraries.places.api.Places
 
 class MainActivity : ComponentActivity() {
     private lateinit var auth: FirebaseAuth
@@ -65,9 +27,16 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
+        // Initialize Firebase
         Firebase.initialize(this)
         auth = FirebaseAuth.getInstance()
 
+        // Initialize Google Places API
+        if (!Places.isInitialized()) {
+            Places.initialize(applicationContext, getString(R.string.google_api_key))
+        }
+
+        // Configure Google Sign-In
         val gso = GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
             .requestIdToken(getString(R.string.default_web_client_id))
             .requestEmail()
@@ -138,21 +107,5 @@ class MainActivity : ComponentActivity() {
                 )
             }
         }
-    }
-}
-
-@Composable
-fun Greeting(name: String, modifier: Modifier = Modifier) {
-    Text(
-        text = "Hello $name!",
-        modifier = modifier
-    )
-}
-
-@Preview(showBackground = true)
-@Composable
-fun GreetingPreview() {
-    LicentaTheme {
-        Greeting("Android")
     }
 }
