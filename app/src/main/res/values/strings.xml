@@ -1,4 +1,4 @@
 <resources>
-    <string name="app_name">Licenta</string>
+    <string name="app_name">DrivePro</string>
     <string name="default_web_client_id">AIz...etc</string> <!-- din google-services.json -->
 </resources>

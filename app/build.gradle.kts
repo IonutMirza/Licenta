@@ -61,6 +61,10 @@ dependencies {
     // Compose + Activity
     implementation("androidx.activity:activity-compose:1.9.0")
 
+    implementation("com.google.firebase:firebase-auth-ktx")
+    implementation("com.google.firebase:firebase-firestore-ktx")
+
+
     // Compose UI
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)

@@ -8,7 +8,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.*
 import androidx.compose.ui.platform.LocalContext
-import androidx.core.content.ContextCompat
+import com.example.licenta.model.Car
 import com.example.licenta.ui.theme.LicentaTheme
 import com.google.android.gms.auth.api.signin.GoogleSignIn
 import com.google.android.gms.auth.api.signin.GoogleSignInClient
@@ -46,6 +46,7 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             var currentScreen by remember { mutableStateOf(if (auth.currentUser != null) "home" else "signUp") }
+            var selectedCar by remember { mutableStateOf<Car?>(null) }
             val context = LocalContext.current
 
             val launcher = rememberLauncherForActivityResult(
@@ -68,6 +69,7 @@ class MainActivity : ComponentActivity() {
                 }
             }
 
+            // Home Page - unde se transmite onCarSelected
             when (currentScreen) {
                 "signUp" -> SignUpPage(
                     onNavigateToHomePage = { currentScreen = "home" },
@@ -85,7 +87,8 @@ class MainActivity : ComponentActivity() {
                     },
                     onNavigateToMapPage = { currentScreen = "map" },
                     onNavigateToSwitchPage = { currentScreen = "switch" },
-                    onNavigateToWalletPage = { currentScreen = "wallet" }
+                    onNavigateToWalletPage = { currentScreen = "wallet" },
+                    onCarSelected = { selectedCar -> "car selected" }
                 )
 
                 "map" -> MapPage(
@@ -97,7 +100,8 @@ class MainActivity : ComponentActivity() {
                 "switch" -> SwitchPage(
                     onNavigateToMapPage = { currentScreen = "map" },
                     onNavigateBack = { currentScreen = "home" },
-                    onNavigateToWalletPage = { currentScreen = "wallet" }
+                    onNavigateToWalletPage = { currentScreen = "wallet" },
+                    onCarSelected = { car -> selectedCar = car } // Aici actualizăm selectedCar din MainActivity
                 )
 
                 "wallet" -> WalletPage(

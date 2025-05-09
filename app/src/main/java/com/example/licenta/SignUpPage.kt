@@ -89,6 +89,7 @@ fun SignUpPage(
             Text(if (isSignUp) "Already have an account? Log in" else "Don't have an account? Sign up")
         }
 
+
         Spacer(modifier = Modifier.height(16.dp))
 
         OutlinedButton(

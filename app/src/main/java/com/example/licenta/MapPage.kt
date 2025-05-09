@@ -10,7 +10,6 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
@@ -32,7 +31,8 @@ import com.google.android.libraries.places.api.net.FindAutocompletePredictionsRe
 fun MapPage(
     onNavigateBack: () -> Unit,
     onNavigateToSwitchPage: () -> Unit,
-    onNavigateToWalletPage: () -> Unit
+    onNavigateToWalletPage: () -> Unit,
+
 ) {
     val context = LocalContext.current
 
@@ -154,10 +154,10 @@ fun MapPage(
                 Icon(painter = painterResource(R.drawable.map), contentDescription = "Map", tint = Color.Black)
             }
             IconButton(onClick = onNavigateToSwitchPage, modifier = Modifier.size(50.dp)) {
-                Icon(painter = painterResource(R.drawable.sageti), contentDescription = "Switch", tint = Color.LightGray)
+                Icon(painter = painterResource(R.drawable.garage), contentDescription = "Garage", tint = Color.LightGray)
             }
             IconButton(onClick = onNavigateToWalletPage, modifier = Modifier.size(50.dp)) {
-                Icon(painter = painterResource(R.drawable.wallet), contentDescription = "Wallet", tint = Color.LightGray)
+                Icon(painter = painterResource(R.drawable.settings), contentDescription = "Settings", tint = Color.LightGray)
             }
         }
     }
