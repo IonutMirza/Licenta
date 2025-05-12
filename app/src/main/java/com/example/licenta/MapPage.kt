@@ -25,6 +25,27 @@ import com.google.android.libraries.places.api.model.AutocompletePrediction
 import com.google.android.libraries.places.api.model.Place
 import com.google.android.libraries.places.api.net.FetchPlaceRequest
 import com.google.android.libraries.places.api.net.FindAutocompletePredictionsRequest
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import androidx.compose.ui.graphics.asAndroidBitmap
+import androidx.core.content.ContextCompat
+import android.graphics.drawable.BitmapDrawable
+import android.graphics.drawable.Drawable
+import com.google.android.gms.maps.model.BitmapDescriptor
+import com.google.android.gms.maps.model.BitmapDescriptorFactory
+
+fun bitmapDescriptorFromVector(context: android.content.Context, vectorResId: Int): BitmapDescriptor {
+    val drawable: Drawable = ContextCompat.getDrawable(context, vectorResId)!!
+    val bitmap = Bitmap.createBitmap(
+        drawable.intrinsicWidth,
+        drawable.intrinsicHeight,
+        Bitmap.Config.ARGB_8888
+    )
+    val canvas = Canvas(bitmap)
+    drawable.setBounds(0, 0, canvas.width, canvas.height)
+    drawable.draw(canvas)
+    return BitmapDescriptorFactory.fromBitmap(bitmap)
+}
 
 @SuppressLint("MissingPermission")
 @Composable
@@ -133,9 +154,12 @@ fun MapPage(
                 properties = MapProperties(isMyLocationEnabled = true)
             ) {
                 currentLocation?.let {
+                    val icon = remember { bitmapDescriptorFromVector(context, R.drawable.car_icon) }
+
                     Marker(
                         state = MarkerState(position = it),
-                        title = "Locația ta"
+                        title = "Locația ta",
+                        icon = icon
                     )
                 }
             }

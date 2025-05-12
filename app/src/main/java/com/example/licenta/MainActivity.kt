@@ -27,16 +27,13 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // Initialize Firebase
         Firebase.initialize(this)
         auth = FirebaseAuth.getInstance()
 
-        // Initialize Google Places API
         if (!Places.isInitialized()) {
             Places.initialize(applicationContext, getString(R.string.google_api_key))
         }
 
-        // Configure Google Sign-In
         val gso = GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
             .requestIdToken(getString(R.string.default_web_client_id))
             .requestEmail()
@@ -45,70 +42,74 @@ class MainActivity : ComponentActivity() {
         googleSignInClient = GoogleSignIn.getClient(this, gso)
 
         setContent {
-            var currentScreen by remember { mutableStateOf(if (auth.currentUser != null) "home" else "signUp") }
-            var selectedCar by remember { mutableStateOf<Car?>(null) }
-            val context = LocalContext.current
+            LicentaTheme {
+                var currentScreen by remember { mutableStateOf(if (auth.currentUser != null) "home" else "signUp") }
+                var selectedCar by remember { mutableStateOf<Car?>(null) }
 
-            val launcher = rememberLauncherForActivityResult(
-                contract = ActivityResultContracts.StartActivityForResult()
-            ) { result ->
-                val task = GoogleSignIn.getSignedInAccountFromIntent(result.data)
-                try {
-                    val account = task.getResult(ApiException::class.java)
-                    val credential = GoogleAuthProvider.getCredential(account.idToken, null)
-                    FirebaseAuth.getInstance().signInWithCredential(credential)
-                        .addOnCompleteListener { authResult ->
-                            if (authResult.isSuccessful) {
-                                currentScreen = "home"
-                            } else {
-                                Toast.makeText(context, "Google sign-in failed", Toast.LENGTH_SHORT).show()
+                val context = LocalContext.current
+
+                val launcher = rememberLauncherForActivityResult(
+                    contract = ActivityResultContracts.StartActivityForResult()
+                ) { result ->
+                    val task = GoogleSignIn.getSignedInAccountFromIntent(result.data)
+                    try {
+                        val account = task.getResult(ApiException::class.java)
+                        val credential = GoogleAuthProvider.getCredential(account.idToken, null)
+                        auth.signInWithCredential(credential)
+                            .addOnCompleteListener { authResult ->
+                                if (authResult.isSuccessful) {
+                                    currentScreen = "home"
+                                } else {
+                                    Toast.makeText(context, "Google sign-in failed", Toast.LENGTH_SHORT).show()
+                                }
                             }
-                        }
-                } catch (e: ApiException) {
-                    Toast.makeText(context, "Google sign-in error: ${e.message}", Toast.LENGTH_SHORT).show()
-                }
-            }
-
-            // Home Page - unde se transmite onCarSelected
-            when (currentScreen) {
-                "signUp" -> SignUpPage(
-                    onNavigateToHomePage = { currentScreen = "home" },
-                    onGoogleSignInClick = {
-                        val signInIntent = googleSignInClient.signInIntent
-                        launcher.launch(signInIntent)
+                    } catch (e: ApiException) {
+                        Toast.makeText(context, "Google sign-in error: ${e.message}", Toast.LENGTH_SHORT).show()
                     }
-                )
+                }
 
-                "home" -> HomePage(
-                    onLogout = {
-                        auth.signOut()
-                        googleSignInClient.signOut()
-                        currentScreen = "signUp"
-                    },
-                    onNavigateToMapPage = { currentScreen = "map" },
-                    onNavigateToSwitchPage = { currentScreen = "switch" },
-                    onNavigateToWalletPage = { currentScreen = "wallet" },
-                    onCarSelected = { selectedCar -> "car selected" }
-                )
+                when (currentScreen) {
+                    "signUp" -> SignUpPage(
+                        onNavigateToHomePage = { currentScreen = "home" },
+                        onGoogleSignInClick = {
+                            val signInIntent = googleSignInClient.signInIntent
+                            launcher.launch(signInIntent)
+                        }
+                    )
 
-                "map" -> MapPage(
-                    onNavigateToSwitchPage = { currentScreen = "switch" },
-                    onNavigateBack = { currentScreen = "home" },
-                    onNavigateToWalletPage = { currentScreen = "wallet" }
-                )
+                    "home" -> HomePage(
+                        onLogout = {
+                            auth.signOut()
+                            googleSignInClient.signOut()
+                            currentScreen = "signUp"
+                        },
+                        onNavigateToMapPage = { currentScreen = "map" },
+                        onNavigateToSwitchPage = { currentScreen = "switch" },
+                        onNavigateToWalletPage = { currentScreen = "wallet" },
+                        onNavigateToObdDataPage = { /* poate adaugi asta dacă folosești pop-up */ },
+                        selectedCar = selectedCar, // 🔹 trimis către HomePage
+                        onCarSelected = { car -> selectedCar = car }
+                    )
 
-                "switch" -> SwitchPage(
-                    onNavigateToMapPage = { currentScreen = "map" },
-                    onNavigateBack = { currentScreen = "home" },
-                    onNavigateToWalletPage = { currentScreen = "wallet" },
-                    onCarSelected = { car -> selectedCar = car } // Aici actualizăm selectedCar din MainActivity
-                )
+                    "map" -> MapPage(
+                        onNavigateToSwitchPage = { currentScreen = "switch" },
+                        onNavigateBack = { currentScreen = "home" },
+                        onNavigateToWalletPage = { currentScreen = "wallet" }
+                    )
 
-                "wallet" -> WalletPage(
-                    onNavigateToMapPage = { currentScreen = "map" },
-                    onNavigateToSwitchPage = { currentScreen = "switch" },
-                    onNavigateBack = { currentScreen = "home" }
-                )
+                    "switch" -> SwitchPage(
+                        onNavigateToMapPage = { currentScreen = "map" },
+                        onNavigateBack = { currentScreen = "home" },
+                        onNavigateToWalletPage = { currentScreen = "wallet" },
+                        onCarSelected = { car -> selectedCar = car }
+                    )
+
+                    "wallet" -> WalletPage(
+                        onNavigateToMapPage = { currentScreen = "map" },
+                        onNavigateToSwitchPage = { currentScreen = "switch" },
+                        onNavigateBack = { currentScreen = "home" }
+                    )
+                }
             }
         }
     }
