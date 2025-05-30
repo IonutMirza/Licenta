@@ -86,7 +86,7 @@ class MainActivity : ComponentActivity() {
                         onNavigateToMapPage = { currentScreen = "map" },
                         onNavigateToSwitchPage = { currentScreen = "switch" },
                         onNavigateToWalletPage = { currentScreen = "wallet" },
-                        onNavigateToObdDataPage = { /* poate adaugi asta dacă folosești pop-up */ },
+                        //onNavigateToObdDataPage = { /* poate adaugi asta dacă folosești pop-up */ },
                         selectedCar = selectedCar, // 🔹 trimis către HomePage
                         onCarSelected = { car -> selectedCar = car }
                     )

@@ -38,7 +38,7 @@ fun SwitchPage(
 
     // Încarcă mașinile din Firestore
     LaunchedEffect(userId) {
-        firestore.collection("cars")
+        firestore.collection("cars1")
             .whereEqualTo("userId", userId)
             .get()
             .addOnSuccessListener { result ->
@@ -114,7 +114,7 @@ fun SwitchPage(
 
                     // Buton ștergere
                     IconButton(onClick = {
-                        firestore.collection("cars")
+                        firestore.collection("cars1")
                             .document(car.licensePlate)
                             .delete()
                             .addOnSuccessListener {
@@ -204,7 +204,7 @@ fun SwitchPage(
                         model = editedModel,
                         //year = editedYear.toIntOrNull() ?: carToEdit!!.year
                     )
-                    firestore.collection("cars")
+                    firestore.collection("cars1")
                         .document(carToEdit!!.licensePlate)
                         .set(updatedCar)
                         .addOnSuccessListener {

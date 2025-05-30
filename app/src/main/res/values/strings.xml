@@ -1,5 +1,5 @@
 <resources>
     <string name="app_name">DrivePro</string>
     <string name="default_web_client_id">AIz...etc</string> <!-- din google-services.json -->
-    <string name="google_api_key">AIzaSyDt3O3QFQvioj99SKYtYh1KejO1_RcgLBY</string>
+    <string name="google_api_key">AIzaSyBX1B69iOAd1sAt941gh5rnB2M8vRbUEPA</string>
 </resources>

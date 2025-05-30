@@ -37,8 +37,7 @@ fun HomePage(
     onNavigateToMapPage: () -> Unit,
     onNavigateToSwitchPage: () -> Unit,
     onNavigateToWalletPage: () -> Unit,
-    onNavigateToObdDataPage: () -> Unit,
-    selectedCar: Car?,  // 🔹 adăugat
+    selectedCar: Car?,
     onCarSelected: (Car) -> Unit
 ) {
     val context = LocalContext.current
@@ -48,21 +47,24 @@ fun HomePage(
     val bluetoothAdapter: BluetoothAdapter? = BluetoothAdapter.getDefaultAdapter()
 
     var cars by remember { mutableStateOf(emptyList<Car>()) }
-    var selectedCar by remember { mutableStateOf<Car?>(null) }
     var showAddCarDialog by remember { mutableStateOf(false) }
     var brand by remember { mutableStateOf("") }
     var model by remember { mutableStateOf("") }
     var year by remember { mutableStateOf("") }
     var licensePlate by remember { mutableStateOf("") }
+
     var bluetoothStatus by remember { mutableStateOf("Disconnected") }
     var connectedDeviceName by remember { mutableStateOf<String?>(null) }
     var isObdConnected by remember { mutableStateOf(false) }
     var showObdDialog by remember { mutableStateOf(false) }
+    var showLiveDataDialog by remember { mutableStateOf(false) }
 
+    // Permisiuni Bluetooth și Location
     val permissionLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.RequestMultiplePermissions()
+        ActivityResultContracts.RequestMultiplePermissions()
     ) { permissions ->
-        if (permissions.values.all { it }) {
+        val allGranted = permissions.values.all { it }
+        if (allGranted) {
             connectToOBD(context, bluetoothAdapter) { name, success ->
                 connectedDeviceName = name
                 isObdConnected = success
@@ -77,21 +79,22 @@ fun HomePage(
         permissionLauncher.launch(
             arrayOf(
                 Manifest.permission.BLUETOOTH_CONNECT,
-                Manifest.permission.BLUETOOTH_SCAN
+                Manifest.permission.BLUETOOTH_SCAN,
+                Manifest.permission.ACCESS_FINE_LOCATION
             )
         )
     }
 
+    // Încărcare mașini din Firestore când utilizatorul se schimbă
     LaunchedEffect(user?.uid) {
         user?.uid?.let { uid ->
-            firestore.collection("cars")
+            firestore.collection("cars1")
                 .whereEqualTo("userId", uid)
                 .get()
                 .addOnSuccessListener { result ->
                     cars = result.map { it.toObject(Car::class.java) }
                     if (selectedCar == null && cars.isNotEmpty()) {
-                        selectedCar = cars[0]
-                        onCarSelected(cars[0])
+                        onCarSelected(cars.first())
                     }
                 }
         }
@@ -104,24 +107,25 @@ fun HomePage(
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Text("Drive like a Pro", fontSize = 32.sp, fontWeight = FontWeight.Bold)
-        Spacer(modifier = Modifier.height(8.dp))
+        Spacer(Modifier.height(8.dp))
         Text("Welcome, $username!", fontSize = 24.sp)
-        Spacer(modifier = Modifier.height(16.dp))
+        Spacer(Modifier.height(16.dp))
 
         Text(
-            text = "Bluetooth Status: $bluetoothStatus" +
-                    (connectedDeviceName?.let { " - $it" } ?: ""),
-            fontSize = 16.sp,
-            color = if (isObdConnected) Color.Green else Color.Red
+            text = "Bluetooth Status: $bluetoothStatus" + (connectedDeviceName?.let { " - $it" } ?: ""),
+            color = if (isObdConnected) Color.Green else Color.Red,
+            fontSize = 16.sp
         )
-
-        Spacer(modifier = Modifier.height(16.dp))
+        Spacer(Modifier.height(16.dp))
 
         selectedCar?.let {
-            Text("Selected Car: ${it.brand} ${it.model}", fontSize = 18.sp, fontWeight = FontWeight.Medium)
+            Text(
+                "Selected Car: ${it.brand} ${it.model}",
+                fontSize = 18.sp,
+                fontWeight = FontWeight.Medium
+            )
         }
-
-        Spacer(modifier = Modifier.height(16.dp))
+        Spacer(Modifier.height(16.dp))
 
         LazyColumn(modifier = Modifier.weight(1f)) {
             items(cars) { car ->
@@ -129,23 +133,23 @@ fun HomePage(
                     text = "${car.brand} ${car.model}",
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clickable {
-                            selectedCar = car
-                            onCarSelected(car)
-                        }
-                        .background(if (selectedCar == car) Color.LightGray else Color.Transparent)
+                        .clickable { onCarSelected(car) }
+                        .background(if (car == selectedCar) Color.LightGray else Color.Transparent)
                         .padding(8.dp)
                 )
             }
         }
 
-        Spacer(modifier = Modifier.height(16.dp))
+        Spacer(Modifier.height(16.dp))
 
-        Button(onClick = { showAddCarDialog = true }, modifier = Modifier.fillMaxWidth()) {
+        Button(
+            onClick = { showAddCarDialog = true },
+            modifier = Modifier.fillMaxWidth()
+        ) {
             Text("Add New Car")
         }
 
-        Spacer(modifier = Modifier.height(8.dp))
+        Spacer(Modifier.height(8.dp))
 
         Button(
             onClick = { requestBluetoothPermissions() },
@@ -155,7 +159,8 @@ fun HomePage(
         }
 
         if (isObdConnected) {
-            Spacer(modifier = Modifier.height(8.dp))
+            Spacer(Modifier.height(8.dp))
+
             Button(
                 onClick = { showObdDialog = true },
                 modifier = Modifier.fillMaxWidth(),
@@ -163,61 +168,106 @@ fun HomePage(
             ) {
                 Text("View Data Specifications", color = Color.White)
             }
+
+            Spacer(Modifier.height(8.dp))
+
+            Button(
+                onClick = { showLiveDataDialog = true },
+                modifier = Modifier.fillMaxWidth(),
+                colors = ButtonDefaults.buttonColors(containerColor = Color.Blue)
+            ) {
+                Text("Read Live Data", color = Color.White)
+            }
         }
 
+        Spacer(Modifier.height(8.dp))
 
-        Spacer(modifier = Modifier.height(24.dp))
+        Button(
+            onClick = onLogout,
+            colors = ButtonDefaults.buttonColors(containerColor = Color.Red),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text("Log Out", color = Color.White)
+        }
+
+        Spacer(Modifier.height(16.dp))
 
         BottomNavigationBar(
             onMapClick = onNavigateToMapPage,
             onSwitchClick = onNavigateToSwitchPage,
-            onWalletClick = onNavigateToWalletPage,
-            onLogout = onLogout
+            onWalletClick = onNavigateToWalletPage
         )
     }
 
-    if (showObdDialog) {
-        AlertDialog(
-            onDismissRequest = { showObdDialog = false },
-            title = { Text("OBD Data") },
-            text = {
-                val speed = (30..160).random()
-                val rpm = (800..5000).random()
-                val fuelConsumption = (5..15).random() + (0..9).random() * 0.1
-                Column {
-                    Text("Speed: $speed km/h")
-                    Text("RPM: $rpm")
-                    Text("Fuel Consumption: ${"%.1f".format(fuelConsumption)} L/100km")
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = { showObdDialog = false }) {
-                    Text("Close")
-                }
+    // Dialog de adăugare mașină
+    AddCarDialog(
+        show = showAddCarDialog,
+        brand = brand,
+        model = model,
+        year = year,
+        licensePlate = licensePlate,
+        onDismiss = { showAddCarDialog = false },
+        onConfirm = { b, m, y, lp ->
+            val uid = user?.uid ?: return@AddCarDialog
+            val newCar = Car(b, m, y, lp, uid)
+            firestore.collection("cars1").add(newCar).addOnSuccessListener {
+                showAddCarDialog = false
+                brand = ""; model = ""; year = ""; licensePlate = ""
+                // Reîncărcare lista de mașini
+                firestore.collection("cars1")
+                    .whereEqualTo("userId", uid)
+                    .get()
+                    .addOnSuccessListener { result ->
+                        cars = result.map { it.toObject(Car::class.java) }
+                        if (selectedCar == null && cars.isNotEmpty()) {
+                            onCarSelected(cars.first())
+                        }
+                    }
             }
-        )
-    }
+        }
+    )
 
-    if (showAddCarDialog) {
+    if (showObdDialog) ObdStaticDataDialog(onDismiss = { showObdDialog = false })
+    if (showLiveDataDialog) ObdLiveDataDialog(onDismiss = { showLiveDataDialog = false })
+}
+
+
+
+@Composable
+fun AddCarDialog(
+    show: Boolean,
+    brand: String,
+    model: String,
+    year: String,
+    licensePlate: String,
+    onDismiss: () -> Unit,
+    onConfirm: (String, String, String, String) -> Unit
+) {
+    var b by remember { mutableStateOf(brand) }
+    var m by remember { mutableStateOf(model) }
+    var y by remember { mutableStateOf(year) }
+    var lp by remember { mutableStateOf(licensePlate) }
+
+    if (show) {
         AlertDialog(
-            onDismissRequest = { showAddCarDialog = false },
+            onDismissRequest = onDismiss,
             title = { Text("Add New Car") },
             text = {
                 Column {
-                    OutlinedTextField(value = brand, onValueChange = { brand = it }, label = { Text("Brand") })
-                    OutlinedTextField(value = model, onValueChange = { model = it }, label = { Text("Model") })
-                    OutlinedTextField(value = year, onValueChange = { year = it }, label = { Text("Year") })
-                    OutlinedTextField(value = licensePlate, onValueChange = { licensePlate = it }, label = { Text("License Plate") })
+                    OutlinedTextField(value = b, onValueChange = { b = it }, label = { Text("Brand") })
+                    OutlinedTextField(value = m, onValueChange = { m = it }, label = { Text("Model") })
+                    OutlinedTextField(value = y, onValueChange = { y = it }, label = { Text("Year") })
+                    OutlinedTextField(value = lp, onValueChange = { lp = it }, label = { Text("License Plate") })
                 }
             },
             confirmButton = {
-                TextButton(onClick = {
-                    val newCar = Car(brand, model, year, licensePlate, user?.uid ?: "")
-                    firestore.collection("cars").add(newCar).addOnSuccessListener {
-                        showAddCarDialog = false
-                    }
-                }) {
+                TextButton(onClick = { onConfirm(b, m, y, lp) }) {
                     Text("Done")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = onDismiss) {
+                    Text("Close")
                 }
             }
         )
@@ -225,11 +275,58 @@ fun HomePage(
 }
 
 @Composable
+fun ObdStaticDataDialog(onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("OBD Data") },
+        text = {
+            val speed = (30..160).random()
+            val rpm = (800..5000).random()
+            val fuelConsumption = (5..15).random() + (0..9).random() * 0.1
+            Column {
+                Text("Speed: $speed km/h")
+                Text("RPM: $rpm")
+                Text("Fuel Consumption: ${"%.1f".format(fuelConsumption)} L/100km")
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Close")
+            }
+        }
+    )
+}
+
+@Composable
+fun ObdLiveDataDialog(onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Live OBD Data") },
+        text = {
+            val speed = (40..120).random()
+            val rpm = (1000..4000).random()
+            val engineTemp = (70..100).random()
+            val throttle = (10..90).random()
+            Column {
+                Text("Speed: $speed km/h")
+                Text("RPM: $rpm")
+                Text("Engine Temp: $engineTemp °C")
+                Text("Throttle: $throttle %")
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Close")
+            }
+        }
+    )
+}
+
+@Composable
 fun BottomNavigationBar(
     onMapClick: () -> Unit,
     onSwitchClick: () -> Unit,
-    onWalletClick: () -> Unit,
-    onLogout: () -> Unit
+    onWalletClick: () -> Unit
 ) {
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
         Row(
@@ -268,78 +365,71 @@ fun BottomNavigationBar(
                 )
             }
         }
-
-        Spacer(modifier = Modifier.height(8.dp))
-
-        Button(
-            onClick = onLogout,
-            colors = ButtonDefaults.buttonColors(containerColor = Color.Red),
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Text("Log Out", color = Color.White)
-        }
     }
 }
 
 @SuppressLint("MissingPermission")
 fun connectToOBD(
-    context: android.content.Context,
-    bluetoothAdapter: BluetoothAdapter?,
-    onConnectionResult: (deviceName: String?, success: Boolean) -> Unit
+        context: android.content.Context,
+        bluetoothAdapter: BluetoothAdapter?,
+        onConnectionResult: (deviceName: String?, success: Boolean) -> Unit
 ) {
-    try {
-        // Verificarea permisiunii Bluetooth
-        val bluetoothPermissionGranted = ContextCompat.checkSelfPermission(
-            context, Manifest.permission.BLUETOOTH_CONNECT
-        ) == PackageManager.PERMISSION_GRANTED
+        try {
+            // Verificarea permisiunii Bluetooth
+            val bluetoothPermissionGranted = ContextCompat.checkSelfPermission(
+                context, Manifest.permission.BLUETOOTH_CONNECT
+            ) == PackageManager.PERMISSION_GRANTED
 
-        // Verificarea permisiunii de locație
-        val locationPermissionGranted = ContextCompat.checkSelfPermission(
-            context, Manifest.permission.ACCESS_FINE_LOCATION
-        ) == PackageManager.PERMISSION_GRANTED
+            // Verificarea permisiunii de locație
+            val locationPermissionGranted = ContextCompat.checkSelfPermission(
+                context, Manifest.permission.ACCESS_FINE_LOCATION
+            ) == PackageManager.PERMISSION_GRANTED
 
-        // Dacă nu avem permisiunile necesare, cerem permisiunile
-        if (!bluetoothPermissionGranted || !locationPermissionGranted) {
-            ActivityCompat.requestPermissions(
-                context as Activity, // context trebuie să fie o activitate pentru a cere permisiuni
-                arrayOf(
-                    Manifest.permission.BLUETOOTH_CONNECT,
-                    Manifest.permission.BLUETOOTH_SCAN,
-                    Manifest.permission.ACCESS_FINE_LOCATION
-                ),
-                1
-            )
-            return
-        }
+            // Dacă nu avem permisiunile necesare, cerem permisiunile
+            if (!bluetoothPermissionGranted || !locationPermissionGranted) {
+                ActivityCompat.requestPermissions(
+                    context as Activity, // context trebuie să fie o activitate pentru a cere permisiuni
+                    arrayOf(
+                        Manifest.permission.BLUETOOTH_CONNECT,
+                        Manifest.permission.BLUETOOTH_SCAN,
+                        Manifest.permission.ACCESS_FINE_LOCATION
+                    ),
+                    1
+                )
+                return
+            }
 
-        if (bluetoothAdapter == null) {
-            Toast.makeText(context, "Bluetooth not supported", Toast.LENGTH_SHORT).show()
+            if (bluetoothAdapter == null) {
+                Toast.makeText(context, "Bluetooth not supported", Toast.LENGTH_SHORT).show()
+                onConnectionResult(null, false)
+                return
+            }
+
+            if (!bluetoothAdapter.isEnabled) {
+                Toast.makeText(context, "Bluetooth not enabled", Toast.LENGTH_SHORT).show()
+                onConnectionResult(null, false)
+                return
+            }
+
+            // Accesăm dispozitivele asociate
+            val pairedDevices: Set<BluetoothDevice> = bluetoothAdapter.bondedDevices
+            val obdDevice = pairedDevices.firstOrNull { it.name.contains("OBD", ignoreCase = true) }
+
+            if (obdDevice != null) {
+                Toast.makeText(context, "Connecting to ${obdDevice.name}", Toast.LENGTH_SHORT)
+                    .show()
+                onConnectionResult(obdDevice.name, true) // Simulare conectare
+            } else {
+                Toast.makeText(context, "No OBD device found", Toast.LENGTH_SHORT).show()
+                onConnectionResult(null, false)
+            }
+        } catch (e: SecurityException) {
+            Toast.makeText(context, "Permission denied: ${e.localizedMessage}", Toast.LENGTH_LONG)
+                .show()
             onConnectionResult(null, false)
-            return
-        }
-
-        if (!bluetoothAdapter.isEnabled) {
-            Toast.makeText(context, "Bluetooth not enabled", Toast.LENGTH_SHORT).show()
-            onConnectionResult(null, false)
-            return
-        }
-
-        // Accesăm dispozitivele asociate
-        val pairedDevices: Set<BluetoothDevice> = bluetoothAdapter.bondedDevices
-        val obdDevice = pairedDevices.firstOrNull { it.name.contains("OBD", ignoreCase = true) }
-
-        if (obdDevice != null) {
-            Toast.makeText(context, "Connecting to ${obdDevice.name}", Toast.LENGTH_SHORT).show()
-            onConnectionResult(obdDevice.name, true) // Simulare conectare
-        } else {
-            Toast.makeText(context, "No OBD device found", Toast.LENGTH_SHORT).show()
+        } catch (e: Exception) {
+            Toast.makeText(context, "Error: ${e.localizedMessage}", Toast.LENGTH_LONG).show()
             onConnectionResult(null, false)
         }
-    } catch (e: SecurityException) {
-        Toast.makeText(context, "Permission denied: ${e.localizedMessage}", Toast.LENGTH_LONG).show()
-        onConnectionResult(null, false)
-    } catch (e: Exception) {
-        Toast.makeText(context, "Error: ${e.localizedMessage}", Toast.LENGTH_LONG).show()
-        onConnectionResult(null, false)
-    }
 }
+
