@@ -41,29 +41,31 @@ android {
 }
 
 dependencies {
-    // Googlemaps
+    // Compose Google Maps
     implementation("com.google.maps.android:maps-compose:4.1.1")
     implementation("com.google.android.gms:play-services-maps:18.2.0")
     implementation("com.google.android.gms:play-services-location:21.0.1")
-    implementation ("com.google.android.libraries.places:places:2.7.0")
-    implementation ("com.google.android.gms:play-services-maps:17.0.0")
+
+    // Places API
+    implementation("com.google.android.libraries.places:places:2.7.0")
+
+    // OkHttp & Kotlinx Serialization (JSON parsing)
+    implementation("com.squareup.okhttp3:okhttp:4.11.0")
+    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.0")
 
     // Firebase platform BOM
     implementation(platform("com.google.firebase:firebase-bom:33.10.0"))
 
     // Firebase services
-    implementation("com.google.firebase:firebase-analytics")
+    implementation("com.google.firebase:firebase-analytics-ktx")
     implementation("com.google.firebase:firebase-auth-ktx")
+    implementation("com.google.firebase:firebase-firestore-ktx")
 
     // Google Sign-In
     implementation("com.google.android.gms:play-services-auth:21.0.0")
 
     // Compose + Activity
     implementation("androidx.activity:activity-compose:1.9.0")
-
-    implementation("com.google.firebase:firebase-auth-ktx")
-    implementation("com.google.firebase:firebase-firestore-ktx")
-
 
     // Compose UI
     implementation(libs.androidx.core.ktx)
@@ -74,6 +76,7 @@ dependencies {
     implementation(libs.androidx.ui.graphics)
     implementation(libs.androidx.ui.tooling.preview)
     implementation(libs.androidx.material3)
+    implementation(libs.androidx.appcompat)
 
     // Testing
     testImplementation(libs.junit)
@@ -84,3 +87,4 @@ dependencies {
     debugImplementation(libs.androidx.ui.tooling)
     debugImplementation(libs.androidx.ui.test.manifest)
 }
+

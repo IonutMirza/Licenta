@@ -2,6 +2,15 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
+    <!-- Permisiunile rămân în afara tag-ului <application> -->
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.BLUETOOTH" />
+    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" />
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <uses-permission android:name="android.permission.BLUETOOTH_SCAN" />
+
     <application
         android:allowBackup="true"
         android:dataExtractionRules="@xml/data_extraction_rules"
@@ -13,11 +22,12 @@
         android:theme="@style/Theme.Licenta"
         tools:targetApi="31">
 
+        <!-- Cheia Google Maps (rămâne cum era) -->
         <meta-data
             android:name="com.google.android.geo.API_KEY"
             android:value="@string/google_api_key" />
 
-
+        <!-- MainActivity existentă -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
@@ -25,20 +35,18 @@
             android:theme="@style/Theme.Licenta">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
-
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- ObdConnectActivity – add this line -->
+        <activity
+            android:name=".ObdConnectActivity"
+            android:exported="false"
+            android:label="OBD Connect"
+            android:theme="@style/Theme.Licenta" />
+
+        <!-- Dacă mai ai alte activități (MapPage, SwitchPage, WalletPage)
+             cu intent-filter sau cascade, le mai poți adăuga aici după același model -->
     </application>
-
-    <!-- Permisiunile trebuie să fie în afara tag-ului <application> -->
-    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
-    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
-    <uses-permission android:name="android.permission.INTERNET" />
-    <uses-permission android:name="android.permission.BLUETOOTH" />
-    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" />
-    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
-    <uses-permission android:name="android.permission.BLUETOOTH_SCAN" />
-
-
 </manifest>

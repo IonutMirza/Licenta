@@ -1,5 +1,7 @@
+
 package com.example.licenta
 
+import android.content.Intent
 import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
@@ -27,6 +29,8 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
+        // ––––––––––––––––––––––
+        // Initialize Firebase & Places
         Firebase.initialize(this)
         auth = FirebaseAuth.getInstance()
 
@@ -34,20 +38,23 @@ class MainActivity : ComponentActivity() {
             Places.initialize(applicationContext, getString(R.string.google_api_key))
         }
 
+        // ––––––––––––––––––––––
+        // Configure Google Sign-In
         val gso = GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
             .requestIdToken(getString(R.string.default_web_client_id))
             .requestEmail()
             .build()
-
         googleSignInClient = GoogleSignIn.getClient(this, gso)
 
+        // ––––––––––––––––––––––
+        // Jetpack Compose content
         setContent {
             LicentaTheme {
                 var currentScreen by remember { mutableStateOf(if (auth.currentUser != null) "home" else "signUp") }
                 var selectedCar by remember { mutableStateOf<Car?>(null) }
-
                 val context = LocalContext.current
 
+                // Launcher for Google SignIn Activity
                 val launcher = rememberLauncherForActivityResult(
                     contract = ActivityResultContracts.StartActivityForResult()
                 ) { result ->
@@ -69,46 +76,51 @@ class MainActivity : ComponentActivity() {
                 }
 
                 when (currentScreen) {
-                    "signUp" -> SignUpPage(
-                        onNavigateToHomePage = { currentScreen = "home" },
-                        onGoogleSignInClick = {
-                            val signInIntent = googleSignInClient.signInIntent
-                            launcher.launch(signInIntent)
-                        }
-                    )
-
-                    "home" -> HomePage(
-                        onLogout = {
-                            auth.signOut()
-                            googleSignInClient.signOut()
-                            currentScreen = "signUp"
-                        },
-                        onNavigateToMapPage = { currentScreen = "map" },
-                        onNavigateToSwitchPage = { currentScreen = "switch" },
-                        onNavigateToWalletPage = { currentScreen = "wallet" },
-                        //onNavigateToObdDataPage = { /* poate adaugi asta dacă folosești pop-up */ },
-                        selectedCar = selectedCar, // 🔹 trimis către HomePage
-                        onCarSelected = { car -> selectedCar = car }
-                    )
-
-                    "map" -> MapPage(
-                        onNavigateToSwitchPage = { currentScreen = "switch" },
-                        onNavigateBack = { currentScreen = "home" },
-                        onNavigateToWalletPage = { currentScreen = "wallet" }
-                    )
-
-                    "switch" -> SwitchPage(
-                        onNavigateToMapPage = { currentScreen = "map" },
-                        onNavigateBack = { currentScreen = "home" },
-                        onNavigateToWalletPage = { currentScreen = "wallet" },
-                        onCarSelected = { car -> selectedCar = car }
-                    )
-
-                    "wallet" -> WalletPage(
-                        onNavigateToMapPage = { currentScreen = "map" },
-                        onNavigateToSwitchPage = { currentScreen = "switch" },
-                        onNavigateBack = { currentScreen = "home" }
-                    )
+                    "signUp" -> {
+                        SignUpPage(
+                            onNavigateToHomePage = { currentScreen = "home" },
+                            onGoogleSignInClick = {
+                                val signInIntent = googleSignInClient.signInIntent
+                                launcher.launch(signInIntent)
+                            }
+                        )
+                    }
+                    "home" -> {
+                        HomePage(
+                            onLogout = {
+                                auth.signOut()
+                                googleSignInClient.signOut()
+                                currentScreen = "signUp"
+                            },
+                            onNavigateToMapPage = { currentScreen = "map" },
+                            onNavigateToSwitchPage = { currentScreen = "switch" },
+                            onNavigateToWalletPage = { currentScreen = "wallet" },
+                            selectedCar = selectedCar,
+                            onCarSelected = { car -> selectedCar = car }
+                        )
+                    }
+                    "map" -> {
+                        MapPage(
+                            onNavigateToSwitchPage = { currentScreen = "switch" },
+                            onNavigateBack = { currentScreen = "home" },
+                            onNavigateToWalletPage = { currentScreen = "wallet" }
+                        )
+                    }
+                    "switch" -> {
+                        SwitchPage(
+                            onNavigateToMapPage = { currentScreen = "map" },
+                            onNavigateBack = { currentScreen = "home" },
+                            onNavigateToWalletPage = { currentScreen = "wallet" },
+                            onCarSelected = { car -> selectedCar = car }
+                        )
+                    }
+                    "wallet" -> {
+                        WalletPage(
+                            onNavigateToMapPage = { currentScreen = "map" },
+                            onNavigateToSwitchPage = { currentScreen = "switch" },
+                            onNavigateBack = { currentScreen = "home" }
+                        )
+                    }
                 }
             }
         }
