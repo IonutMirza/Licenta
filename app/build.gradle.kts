@@ -88,3 +88,5 @@ dependencies {
     debugImplementation(libs.androidx.ui.test.manifest)
 }
 
+apply(plugin = "com.google.gms.google-services")
+

@@ -1,46 +1,52 @@
-// MapPage.kt
 package com.example.licenta
 
 import android.Manifest
 import android.annotation.SuppressLint
-import android.content.Intent
+import android.content.Context
 import android.content.pm.PackageManager
-import android.location.Location
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.drawable.Drawable
 import android.net.Uri
 import android.os.Looper
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import com.google.android.gms.location.*
-import com.google.android.gms.maps.model.*
+import com.google.android.gms.maps.model.CameraPosition
+import com.google.android.gms.maps.model.LatLng
+import com.google.android.gms.maps.model.BitmapDescriptor
+import com.google.android.gms.maps.model.BitmapDescriptorFactory
 import com.google.maps.android.compose.*
 import com.google.android.libraries.places.api.Places
 import com.google.android.libraries.places.api.model.AutocompletePrediction
 import com.google.android.libraries.places.api.model.Place
 import com.google.android.libraries.places.api.net.FetchPlaceRequest
 import com.google.android.libraries.places.api.net.FindAutocompletePredictionsRequest
-import android.graphics.Bitmap
-import android.graphics.Canvas
-import android.graphics.drawable.Drawable
-import androidx.compose.ui.graphics.Color
-import java.text.SimpleDateFormat
-import java.util.*
 
+// ===== Adaugă aceste importuri suplimentare =====
+import com.google.firebase.firestore.Query
+import com.google.firebase.firestore.FieldValue
+import com.google.firebase.firestore.ktx.firestore
+import com.google.firebase.auth.ktx.auth
+import com.google.firebase.ktx.Firebase
 
-/** Convert a VectorDrawable (in res/drawable) into a BitmapDescriptor for a custom marker. */
-fun bitmapDescriptorFromVector(context: android.content.Context, vectorResId: Int): BitmapDescriptor {
+/* ------------------ UTILS: Transformă vector drawable în BitmapDescriptor ------------------ */
+fun bitmapDescriptorFromVector(context: Context, vectorResId: Int): BitmapDescriptor {
     val drawable: Drawable = ContextCompat.getDrawable(context, vectorResId)!!
     val bitmap = Bitmap.createBitmap(
         drawable.intrinsicWidth,
@@ -53,47 +59,122 @@ fun bitmapDescriptorFromVector(context: android.content.Context, vectorResId: In
     return BitmapDescriptorFactory.fromBitmap(bitmap)
 }
 
+/* ------------ START LOCATION UPDATES -> trimite lat, lng, speed(km/h), timestamp ------------- */
+@SuppressLint("MissingPermission")
+fun startLocationUpdates(
+    context: Context,
+    onNewData: (lat: Double, lng: Double, speedKmh: Float, timestamp: Long) -> Unit
+) {
+    val fusedClient = LocationServices.getFusedLocationProviderClient(context)
+    val request = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 1000L)
+        .setMinUpdateDistanceMeters(1f)
+        .build()
 
-/** A data class representing one “car trip.” */
+    val callback = object : LocationCallback() {
+        override fun onLocationResult(result: LocationResult) {
+            result.locations.firstOrNull()?.let { loc ->
+                val speedKmh = loc.speed * 3.6f
+                onNewData(loc.latitude, loc.longitude, speedKmh, loc.time)
+            }
+        }
+    }
+    fusedClient.requestLocationUpdates(request, callback, Looper.getMainLooper())
+}
+
+/* ----------------------------- TRIP RECORD data class (hardcodate) --------------------------- */
 data class TripRecord(
-    val id: Long,                      // use System.currentTimeMillis() at trip start
+    val id: Long,
     val startTimeMs: Long,
     val endTimeMs: Long,
-    val points: List<LatLng>,          // all GPS points recorded
-    val distanceMeters: Float,         // total distance in meters
+    val distanceMeters: Float,
     val avgSpeedKmh: Float,
     val maxSpeedKmh: Float
 ) {
-    /** Returns a human‐readable title, e.g. “14 Jun 2025 15:33 – 15:48” */
-    fun timeWindowString(): String {
-        val fmt = SimpleDateFormat("dd MMM yyyy HH:mm", Locale.getDefault())
-        val start = fmt.format(Date(startTimeMs))
-        val end = fmt.format(Date(endTimeMs))
-        return "$start – $end"
-    }
-
-    /** Distance in km (formatted to one decimal) */
-    fun distanceKmString(): String {
-        return String.format(Locale.getDefault(), "%.1f km", distanceMeters / 1000f)
-    }
-
-    /** Duration in minutes (rounded) */
-    fun durationMin(): Int {
-        val diffMs = endTimeMs - startTimeMs
-        return ((diffMs / 1000f / 60f).toInt())
-    }
-
-    /** Average speed string, e.g. “23 km/h” */
-    fun avgSpeedString(): String {
-        return String.format(Locale.getDefault(), "%d km/h", avgSpeedKmh.toInt())
-    }
-
-    /** Max speed string, e.g. “65 km/h” */
-    fun maxSpeedString(): String {
-        return String.format(Locale.getDefault(), "%d km/h", maxSpeedKmh.toInt())
+    fun formattedDescription(): String {
+        val distKm = String.format("%.1f", distanceMeters / 1000f)
+        val durMin = (endTimeMs - startTimeMs) / 60000
+        val avg = String.format("%.1f", avgSpeedKmh)
+        return "· $distKm km • $durMin min • avg $avg km/h"
     }
 }
 
+/* ----------------------------- DATA CLASS Favorite ------------------------------------------ */
+data class Favorite(
+    val id: String,
+    val name: String,
+    val latitude: Double,
+    val longitude: Double
+)
+
+
+
+// ====== 2.b Funcții pentru Firestore: ======
+
+/**
+ * Salvează un TripRecord în colecția top‐level "trips".
+ */
+fun saveTripToFirestoreTopLevel(trip: TripRecord) {
+    val uid = Firebase.auth.currentUser?.uid ?: return
+    val data = hashMapOf(
+        "uid" to uid,
+        "startTimeMs" to trip.startTimeMs,
+        "endTimeMs" to trip.endTimeMs,
+        "distanceMeters" to trip.distanceMeters,
+        "avgSpeedKmh" to trip.avgSpeedKmh,
+        "maxSpeedKmh" to trip.maxSpeedKmh,
+        "createdAt" to FieldValue.serverTimestamp()
+    )
+    Firebase.firestore
+        .collection("trips")
+        .add(data)
+        .addOnSuccessListener {
+            // Trip salvat cu succes
+        }
+        .addOnFailureListener { e ->
+            // Eroare la salvare
+        }
+}
+
+/**
+ * Încarcă ultimele 10 TripRecord‐uri ale utilizatorului curent din colecția top‐level "trips".
+ */
+fun loadLast10TripsFromFirestoreTopLevel(onLoaded: (List<TripRecord>) -> Unit) {
+    val uid = Firebase.auth.currentUser?.uid ?: return
+    Firebase.firestore
+        .collection("trips")
+        .whereEqualTo("uid", uid)
+        .orderBy("startTimeMs", Query.Direction.DESCENDING)
+        .limit(10)
+        .get()
+        .addOnSuccessListener { querySnapshot ->
+            val list = mutableListOf<TripRecord>()
+            for (doc in querySnapshot.documents) {
+                val start = doc.getLong("startTimeMs") ?: continue
+                val end = doc.getLong("endTimeMs") ?: continue
+                val dist = doc.getDouble("distanceMeters")?.toFloat() ?: continue
+                val avg  = doc.getDouble("avgSpeedKmh")?.toFloat() ?: continue
+                val max  = doc.getDouble("maxSpeedKmh")?.toFloat() ?: continue
+                list.add(
+                    TripRecord(
+                        id = doc.id.hashCode().toLong(),
+                        startTimeMs = start,
+                        endTimeMs = end,
+                        distanceMeters = dist,
+                        avgSpeedKmh = avg,
+                        maxSpeedKmh = max
+                    )
+                )
+            }
+            onLoaded(list)
+        }
+        .addOnFailureListener {
+            onLoaded(emptyList())
+        }
+}
+
+
+
+// ====== 3. Composable MapPage cu integrare Firestore ======
 
 @SuppressLint("MissingPermission")
 @Composable
@@ -105,7 +186,7 @@ fun MapPage(
     val context = LocalContext.current
     val apiKey = context.getString(R.string.google_api_key)
 
-    // 1️⃣ Initialize Google Places one time
+    // 1) Inițializează Google Places API (o singură dată)
     LaunchedEffect(Unit) {
         if (!Places.isInitialized()) {
             Places.initialize(context, apiKey)
@@ -113,164 +194,49 @@ fun MapPage(
     }
     val placesClient = remember { Places.createClient(context) }
 
-    // 2️⃣ State: camera, current location, speed/status, trip detection
+    // 2) Starea camerei și a locației curente
     val cameraPositionState = rememberCameraPositionState()
     var currentLocation by remember { mutableStateOf<LatLng?>(null) }
 
-    var movementStatus by remember { mutableStateOf("No Move") }
-    var speedKmh by remember { mutableStateOf(0f) }
+    // 3) Viteză & status & pauze ≤ 5 min
+    var currentSpeedKmh by remember { mutableStateOf(0f) }
+    var status by remember { mutableStateOf("No Move") }
+    var statusEmoji by remember { mutableStateOf("🛑") }
+    var stopStartTimestamp by remember { mutableStateOf<Long?>(null) }
+    var lastDriveTimestamp by remember { mutableStateOf<Long?>(null) }
 
-    // Threshold: above 10 km/h → “in a car”; below 10 → walking or stationary
-    val CAR_THRESHOLD_KMH = 10f
-
-    // Is a trip currently ongoing?
-    var inTrip by remember { mutableStateOf(false) }
-
-    // For the current trip we are building:
-    val currentTripPoints = remember { mutableStateListOf<LatLng>() }
-    var currentTripDistance by remember { mutableStateOf(0f) }
-    var currentTripMaxSpeed by remember { mutableStateOf(0f) }
-    var currentTripStartTime by remember { mutableStateOf(0L) }
-    var lastTripLocationObj by remember { mutableStateOf<Location?>(null) }
-
-    // A list of all finished trips (up to memory)
-    val tripsList = remember { mutableStateListOf<TripRecord>() }
-
-    // 3️⃣ Request permission, then start listening for location‐updates
-    RequestLocationPermission {
-        val fusedClient = LocationServices.getFusedLocationProviderClient(context)
-
-        // 3a) center map once on last known
-        fusedClient.lastLocation.addOnSuccessListener { loc ->
-            loc?.let {
-                val ll = LatLng(it.latitude, it.longitude)
-                currentLocation = ll
-                cameraPositionState.position = CameraPosition.fromLatLngZoom(ll, 15f)
-            }
-        }
-
-        // 3b) request continuous updates
-        val locationRequest = LocationRequest.Builder(
-            Priority.PRIORITY_HIGH_ACCURACY,
-            2000L
-        )
-            .setMinUpdateDistanceMeters(1f)
-            .build()
-
-        val locationCallback = object : LocationCallback() {
-            override fun onLocationResult(result: LocationResult) {
-                result.locations.firstOrNull()?.let { loc ->
-                    val newLatLng = LatLng(loc.latitude, loc.longitude)
-                    currentLocation = newLatLng
-
-                    // compute speed in km/h from loc.speed (m/s)
-                    val newSpeedKmh = loc.speed * 3.6f
-                    speedKmh = newSpeedKmh
-
-                    // classify movement
-                    movementStatus = when {
-                        newSpeedKmh < 0.5f -> "No Move"
-                        newSpeedKmh < CAR_THRESHOLD_KMH -> "Walking"
-                        else -> "Drive"
-                    }
-
-                    // maintain camera zoom but follow location
-                    val currentZoom = cameraPositionState.position.zoom
-                    cameraPositionState.position =
-                        CameraPosition.fromLatLngZoom(newLatLng, currentZoom)
-
-                    // ————— Trip detection logic —————
-                    if (!inTrip && newSpeedKmh >= CAR_THRESHOLD_KMH) {
-                        // Start a new trip
-                        inTrip = true
-                        currentTripStartTime = System.currentTimeMillis()
-                        currentTripPoints.clear()
-                        currentTripPoints.add(newLatLng)
-                        currentTripDistance = 0f
-                        currentTripMaxSpeed = newSpeedKmh
-                        lastTripLocationObj = Location("trip").apply {
-                            latitude = loc.latitude
-                            longitude = loc.longitude
-                        }
-                    } else if (inTrip) {
-                        // We are already in a trip
-                        // Accumulate distance from lastTripLocationObj → loc
-                        lastTripLocationObj?.let { prevLoc ->
-                            val dist = loc.distanceTo(prevLoc)
-                            currentTripDistance += dist
-                        }
-                        // update max speed
-                        if (newSpeedKmh > currentTripMaxSpeed) {
-                            currentTripMaxSpeed = newSpeedKmh
-                        }
-                        // add to our points
-                        currentTripPoints.add(newLatLng)
-                        // update lastTripLocationObj
-                        lastTripLocationObj = Location("trip").apply {
-                            latitude = loc.latitude
-                            longitude = loc.longitude
-                        }
-
-                        // Check if speed dropped below CAR_THRESHOLD → end trip immediately
-                        if (newSpeedKmh < CAR_THRESHOLD_KMH) {
-                            val tripEndTime = System.currentTimeMillis()
-                            // compute duration
-                            val durationMs = tripEndTime - currentTripStartTime
-                            val durationHrs = durationMs.toFloat() / 1000f / 3600f
-                            val avgSpeed = if (durationHrs > 0f) {
-                                (currentTripDistance / 1000f) / durationHrs
-                            } else {
-                                0f
-                            }
-
-                            // store TripRecord if distance > 100 m
-                            if (currentTripDistance >= 100f) {
-                                val tripRecord = TripRecord(
-                                    id = currentTripStartTime,
-                                    startTimeMs = currentTripStartTime,
-                                    endTimeMs = tripEndTime,
-                                    points = currentTripPoints.toList(),
-                                    distanceMeters = currentTripDistance,
-                                    avgSpeedKmh = avgSpeed,
-                                    maxSpeedKmh = currentTripMaxSpeed
-                                )
-                                tripsList.add(0, tripRecord) // newest first
-                                // keep only last 10
-                                if (tripsList.size > 10) {
-                                    tripsList.removeAt(tripsList.size - 1)
-                                }
-                            }
-                            // reset trip
-                            inTrip = false
-                            currentTripPoints.clear()
-                            currentTripDistance = 0f
-                            currentTripMaxSpeed = 0f
-                            lastTripLocationObj = null
-                        }
-                    }
-                }
-            }
-        }
-
-        fusedClient.requestLocationUpdates(
-            locationRequest,
-            locationCallback,
-            Looper.getMainLooper()
-        )
-    }
-
-    // 4️⃣ Search / autocomplete UI state
+    // 4) Search / Autocomplete state
     var query by remember { mutableStateOf("") }
     var predictions by remember { mutableStateOf<List<AutocompletePrediction>>(emptyList()) }
 
-    // 5️⃣ Destination pin & “navigate” dialog
+    // 5) Pin roșu destinație + dialoguri + salvare favorite
     var selectedLocation by remember { mutableStateOf<LatLng?>(null) }
     var showNavigateDialog by remember { mutableStateOf(false) }
+    var showNameDialog by remember { mutableStateOf(false) }
+    var favoriteName by remember { mutableStateOf("") }
 
-    // 6️⃣ “My Last 10 Trips” dialog
+    // FLAG: dacă marker-ul curent este un favorit
+    var isFavoriteSelected by remember { mutableStateOf(false) }
+
+    // 6) My Last 10 Trips (din Firestore)
+    val tripsList = remember { mutableStateListOf<TripRecord>() }
     var showTripsDialog by remember { mutableStateOf(false) }
 
-    // 7️⃣ Autocomplete whenever query changes
+    // Încarcă ultimele 10 tripuri la lansare:
+    LaunchedEffect(Unit) {
+        loadLast10TripsFromFirestoreTopLevel { loaded ->
+            tripsList.clear()
+            tripsList.addAll(loaded)
+        }
+    }
+
+    // 7) Favorites list + dialog de vizualizare + ștergere
+    val favoritesList = remember { mutableStateListOf<Favorite>() }
+    var showFavoritesDialog by remember { mutableStateOf(false) }
+    var favoriteToDelete by remember { mutableStateOf<Favorite?>(null) }
+    var showDeleteConfirmDialog by remember { mutableStateOf(false) }
+
+    // ─── Logica autocomplete (exact cum era inițial) ───
     LaunchedEffect(query) {
         if (query.isNotBlank()) {
             val request = FindAutocompletePredictionsRequest.builder()
@@ -288,17 +254,64 @@ fun MapPage(
         }
     }
 
-    // ───────────── Compose UI ─────────────
+    // ==== Cerem permisiunea și pornim GPS-ul ====
+    RequestLocationPermission {
+        startLocationUpdates(context) { lat, lng, speedKmh, timestamp ->
+            val newLatLng = LatLng(lat, lng)
+            currentLocation = newLatLng
+            cameraPositionState.position = CameraPosition.fromLatLngZoom(newLatLng, 15f)
+            currentSpeedKmh = speedKmh
+
+            if (speedKmh >= 10f) {
+                lastDriveTimestamp = timestamp
+                stopStartTimestamp = null
+                status = "Drive"
+                statusEmoji = "🚗"
+            } else {
+                val now = timestamp
+                if (lastDriveTimestamp != null) {
+                    if (stopStartTimestamp == null) {
+                        stopStartTimestamp = now
+                    }
+                    val elapsed = now - (stopStartTimestamp ?: now)
+                    if (elapsed >= 5 * 60 * 1000) {
+                        status = "Walking"
+                        statusEmoji = "🚶"
+                    } else {
+                        status = "Drive"
+                        statusEmoji = "🚗"
+                    }
+                } else {
+                    if (stopStartTimestamp == null) {
+                        stopStartTimestamp = now
+                    }
+                    val elapsed = now - (stopStartTimestamp ?: now)
+                    if (elapsed >= 5 * 60 * 1000) {
+                        status = "Walking"
+                        statusEmoji = "🚶"
+                    } else {
+                        status = "No Move"
+                        statusEmoji = "🛑"
+                    }
+                }
+            }
+        }
+    }
+
+    /* ─────────────── UI-ul principal ────────────── */
     Column(
         modifier = Modifier
             .fillMaxSize()
             .padding(16.dp)
     ) {
-        // 1️⃣ Search bar + suggestions
+        // — 1️⃣ Search bar + sugestii
         Column {
             OutlinedTextField(
                 value = query,
-                onValueChange = { query = it },
+                onValueChange = {
+                    query = it
+                    isFavoriteSelected = false
+                },
                 label = { Text("Search location") },
                 modifier = Modifier.fillMaxWidth()
             )
@@ -306,8 +319,6 @@ fun MapPage(
                 TextButton(onClick = {
                     query = prediction.getFullText(null).toString()
                     predictions = emptyList()
-
-                    // Fetch place → latLng → place red pin
                     val placeId = prediction.placeId
                     val placeFields = listOf(Place.Field.LAT_LNG)
                     val fetchRequest =
@@ -316,12 +327,14 @@ fun MapPage(
                         .addOnSuccessListener { response ->
                             response.place.latLng?.let { latLng ->
                                 selectedLocation = latLng
+                                isFavoriteSelected = false
                                 cameraPositionState.position =
                                     CameraPosition.fromLatLngZoom(latLng, 15f)
                             }
                         }
                         .addOnFailureListener {
-                            Toast.makeText(context, "Search error", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(context, "Search error", Toast.LENGTH_SHORT)
+                                .show()
                         }
                 }) {
                     Text(text = prediction.getFullText(null).toString())
@@ -331,40 +344,41 @@ fun MapPage(
 
         Spacer(modifier = Modifier.height(8.dp))
 
-        // 2️⃣ Map + custom markers + “My Last 10 Trips” FAB + speed/status card
+        // — 2️⃣ HARTĂ + Markere + 2 FAB-uri
         Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .weight(1f)
         ) {
             GoogleMap(
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier.matchParentSize(),
                 cameraPositionState = cameraPositionState,
-                properties = MapProperties(isMyLocationEnabled = false),
-                uiSettings = MapUiSettings(
-                    zoomControlsEnabled = false,
-                    myLocationButtonEnabled = true
-                ),
+                properties = MapProperties(isMyLocationEnabled = true),
+                uiSettings = MapUiSettings(zoomControlsEnabled = true),
                 onMapClick = { latLng ->
-                    // Tapping on the map places the red “Destination” pin
                     selectedLocation = latLng
+                    isFavoriteSelected = false
                 }
             ) {
-                // 2a) Blue custom marker for “Your Location”
-                currentLocation?.let {
+                // Marker pentru locația curentă (icon_car_loc)
+                currentLocation?.let { loc ->
                     val iconCurrent =
                         bitmapDescriptorFromVector(context, R.drawable.icon_car_loc)
                     Marker(
-                        state = MarkerState(position = it),
+                        state = MarkerState(position = loc),
                         title = "Your Location",
                         icon = iconCurrent
                     )
                 }
 
-                // 2b) Red custom marker for “Destination”
+                // Marker roșu sau fav_pin pentru destinație
                 selectedLocation?.let { dest ->
-                    val iconDest =
-                        bitmapDescriptorFromVector(context, R.drawable.icon_car_loc_red)
+                    val iconRes = if (isFavoriteSelected) {
+                        R.drawable.fav_loc
+                    } else {
+                        R.drawable.car_loc_red
+                    }
+                    val iconDest = bitmapDescriptorFromVector(context, iconRes)
                     Marker(
                         state = MarkerState(position = dest),
                         title = "Destination",
@@ -377,45 +391,111 @@ fun MapPage(
                 }
             }
 
-            // 2c) “My Last 10 Trips” FAB (moved up so that speed/status is below)
+            // Buton “View Trips” (FAB stânga-jos)
             FloatingActionButton(
                 onClick = { showTripsDialog = true },
                 containerColor = MaterialTheme.colorScheme.primary,
                 modifier = Modifier
                     .align(Alignment.BottomStart)
-                    .padding(start = 16.dp, bottom = 76.dp) // push up so status is below
+                    .padding(start = 16.dp, bottom = 66.dp)
                     .size(56.dp)
             ) {
                 Icon(
                     painter = painterResource(id = R.drawable.car_icon),
-                    contentDescription = "View my trips",
+                    contentDescription = "View Trips",
                     tint = Color.White
                 )
             }
 
-            // 2d) Speed/status display (card) at the bottom
-            Column(
+            // Buton “View Favorites” (FAB dreapta-jos)
+            FloatingActionButton(
+                onClick = {
+                    val uid = Firebase.auth.currentUser?.uid
+                    if (uid == null) {
+                        Toast.makeText(
+                            context,
+                            "Please log in to see favorites",
+                            Toast.LENGTH_SHORT
+                        ).show()
+                    } else {
+                        Firebase.firestore
+                            .collection("fav-locations")
+                            .whereEqualTo("uid", uid)
+                            .get()
+                            .addOnSuccessListener { querySnapshot ->
+                                favoritesList.clear()
+                                for (doc in querySnapshot.documents) {
+                                    val name = doc.getString("name") ?: continue
+                                    val lat = doc.getDouble("latitude") ?: continue
+                                    val lng = doc.getDouble("longitude") ?: continue
+                                    favoritesList.add(
+                                        Favorite(
+                                            id = doc.id,
+                                            name = name,
+                                            latitude = lat,
+                                            longitude = lng
+                                        )
+                                    )
+                                }
+                                showFavoritesDialog = true
+                            }
+                            .addOnFailureListener {
+                                Toast.makeText(
+                                    context,
+                                    "Error loading favorites.",
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                            }
+                    }
+                },
+                containerColor = MaterialTheme.colorScheme.primary,
                 modifier = Modifier
-                    .align(Alignment.BottomStart)
-                    .padding(start = 16.dp, bottom = 16.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
+                    .align(Alignment.BottomEnd)
+                    .padding(end = 16.dp, bottom = 66.dp)
+                    .size(56.dp)
             ) {
-                Card(
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                    elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
-                ) {
-                    Text(
-                        text = "$movementStatus (${speedKmh.toInt()} km/h)",
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-                        style = MaterialTheme.typography.bodyMedium
-                    )
-                }
+                Icon(
+                    painter = painterResource(id = R.drawable.fav_loc1),
+                    contentDescription = "View Favorites"
+                )
             }
         }
 
         Spacer(modifier = Modifier.height(8.dp))
 
-        // 3️⃣ Bottom navigation bar (Home, Map, Garage, Settings)
+        // — 3️⃣ Buton “Add to Favorites” (sub hartă)
+        selectedLocation?.let {
+            Button(
+                onClick = { showNameDialog = true },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 8.dp)
+            ) {
+                Text("Add to Favorites")
+            }
+        }
+
+        // — 4️⃣ STATUS + EMOJI + VITEZĂ
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 8.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = "$statusEmoji  $status",
+                    style = MaterialTheme.typography.bodyLarge
+                )
+                Spacer(modifier = Modifier.width(16.dp))
+                Text(
+                    text = String.format("%.0f km/h", currentSpeedKmh),
+                    style = MaterialTheme.typography.bodyLarge
+                )
+            }
+        }
+
+        // — 5️⃣ Bara de navigare jos (Home, Map, Garage, Settings)
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -429,7 +509,7 @@ fun MapPage(
                     tint = Color.LightGray
                 )
             }
-            IconButton(onClick = { /* Already on map */ }, modifier = Modifier.size(50.dp)) {
+            IconButton(onClick = { /* deja suntem pe hartă */ }, modifier = Modifier.size(50.dp)) {
                 Icon(
                     painter = painterResource(R.drawable.map),
                     contentDescription = "Map",
@@ -453,39 +533,117 @@ fun MapPage(
         }
     }
 
-    // ───────────── “Navigate” Dialog for the Destination Pin ─────────────
-    if (showNavigateDialog && selectedLocation != null) {
+    // ─────────────── Dialog: “Nume Favorite” ───────────────
+    if (showNameDialog) {
         AlertDialog(
-            onDismissRequest = { showNavigateDialog = false },
-            title = { Text("Navigate to Destination") },
-            text = { Text("Open route in Google Maps?") },
+            onDismissRequest = { showNameDialog = false },
+            title = { Text("Enter Favorite Name") },
+            text = {
+                OutlinedTextField(
+                    value = favoriteName,
+                    onValueChange = { favoriteName = it },
+                    label = { Text("Ex: Home, Work…") },
+                    singleLine = true
+                )
+            },
             confirmButton = {
                 TextButton(onClick = {
-                    val lat = selectedLocation!!.latitude
-                    val lng = selectedLocation!!.longitude
-                    val gmmIntentUri = Uri.parse("google.navigation:q=$lat,$lng&mode=d")
-                    val mapIntent = Intent(Intent.ACTION_VIEW, gmmIntentUri).apply {
-                        setPackage("com.google.android.apps.maps")
-                    }
-                    if (mapIntent.resolveActivity(context.packageManager) != null) {
-                        context.startActivity(mapIntent)
+                    val uid = Firebase.auth.currentUser?.uid
+                    if (uid == null) {
+                        Toast.makeText(
+                            context,
+                            "You must be logged in",
+                            Toast.LENGTH_SHORT
+                        ).show()
+                    } else if (favoriteName.isBlank()) {
+                        Toast.makeText(
+                            context,
+                            "Name cannot be empty",
+                            Toast.LENGTH_SHORT
+                        ).show()
                     } else {
-                        Toast.makeText(context, "Google Maps is not installed", Toast.LENGTH_SHORT).show()
+                        val data = hashMapOf(
+                            "name" to favoriteName,
+                            "latitude" to selectedLocation!!.latitude,
+                            "longitude" to selectedLocation!!.longitude,
+                            "createdAt" to FieldValue.serverTimestamp(),
+                            "uid" to uid
+                        )
+                        Firebase.firestore
+                            .collection("fav-locations")
+                            .add(data)
+                            .addOnSuccessListener {
+                                Toast.makeText(
+                                    context,
+                                    "Saved to Favorites!",
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                            }
+                            .addOnFailureListener {
+                                Toast.makeText(
+                                    context,
+                                    "Error saving favorite",
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                            }
                     }
-                    showNavigateDialog = false
+                    favoriteName = ""
+                    showNameDialog = false
                 }) {
-                    Text("Open in Google Maps")
+                    Text("Save")
                 }
             },
             dismissButton = {
-                TextButton(onClick = { showNavigateDialog = false }) {
+                TextButton(onClick = {
+                    favoriteName = ""
+                    showNameDialog = false
+                }) {
                     Text("Cancel")
                 }
             }
         )
     }
 
-    // ───────────── “My Last 10 Trips” Dialog ─────────────
+    // ─────────────── Dialog: “Navigate” ───────────────
+    if (showNavigateDialog && selectedLocation != null) {
+        AlertDialog(
+            onDismissRequest = { showNavigateDialog = false },
+            confirmButton = {
+                TextButton(onClick = {
+                    val lat = selectedLocation!!.latitude
+                    val lng = selectedLocation!!.longitude
+                    val gmmIntentUri = Uri.parse("google.navigation:q=$lat,$lng&mode=d")
+                    val mapIntent = android.content.Intent(
+                        android.content.Intent.ACTION_VIEW,
+                        gmmIntentUri
+                    ).apply {
+                        setPackage("com.google.android.apps.maps")
+                    }
+                    if (mapIntent.resolveActivity(context.packageManager) != null) {
+                        context.startActivity(mapIntent)
+                    } else {
+                        Toast.makeText(
+                            context,
+                            "Google Maps nu este instalat",
+                            Toast.LENGTH_SHORT
+                        ).show()
+                    }
+                    showNavigateDialog = false
+                }) {
+                    Text(text = "Navigate în Google Maps")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showNavigateDialog = false }) {
+                    Text("Cancel")
+                }
+            },
+            title = { Text("Navigare către destinație") },
+            text = { Text("Se deschide Google Maps pentru direcții către destinație.") }
+        )
+    }
+
+    // ─────────────── Dialog: “My Last 10 Trips” ───────────────
     if (showTripsDialog) {
         AlertDialog(
             onDismissRequest = { showTripsDialog = false },
@@ -496,137 +654,135 @@ fun MapPage(
             },
             title = { Text("My Last 10 Trips") },
             text = {
-                if (tripsList.isEmpty()) {
-                    // No recorded trips yet
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(16.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally
-                    ) {
-                        Text("No trips recorded yet.")
-                    }
-                } else {
-                    // Show up to 10 trips in a scrollable list
-                    LazyColumn(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .heightIn(max = 400.dp)
-                    ) {
-                        items(tripsList) { trip ->
-                            TripListItem(trip = trip)
-                            Divider(modifier = Modifier.padding(vertical = 8.dp))
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (tripsList.isEmpty()) {
+                        Text(text = "No trips yet.")
+                    } else {
+                        tripsList.forEach { trip ->
+                            Text(text = trip.formattedDescription())
                         }
                     }
                 }
             }
         )
     }
-}
 
-
-/** A small composable that shows one TripRecord: text info + a 150 dp Map preview with polyline */
-@Composable
-private fun TripListItem(trip: TripRecord) {
-    val context = LocalContext.current
-
-    Column(modifier = Modifier.fillMaxWidth()) {
-        // 1) Top info row: date/time window
-        Text(
-            text = trip.timeWindowString(),
-            style = MaterialTheme.typography.titleMedium
+    // ─────────── Dialog: “View Favorites” ───────────
+    if (showFavoritesDialog) {
+        AlertDialog(
+            onDismissRequest = { showFavoritesDialog = false },
+            title = { Text("Your Favorites") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (favoritesList.isEmpty()) {
+                        Text(text = "No favorites yet.")
+                    } else {
+                        favoritesList.forEach { fav ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                // 1) Clic pe nume => centrăm harta și punem fav_pin
+                                Text(
+                                    text = fav.name,
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .clickable {
+                                            val pos = LatLng(fav.latitude, fav.longitude)
+                                            selectedLocation = pos
+                                            isFavoriteSelected = true
+                                            cameraPositionState.position =
+                                                CameraPosition.fromLatLngZoom(pos, 15f)
+                                            showFavoritesDialog = false
+                                        }
+                                )
+                                // 2) Iconiță “X” pentru ștergere
+                                IconButton(onClick = {
+                                    favoriteToDelete = fav
+                                    showDeleteConfirmDialog = true
+                                }) {
+                                    Icon(
+                                        imageVector = Icons.Default.Close,
+                                        contentDescription = "Delete",
+                                        tint = Color.Red
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showFavoritesDialog = false }) {
+                    Text("Close")
+                }
+            }
         )
+    }
 
-        Spacer(modifier = Modifier.height(4.dp))
-
-        // 2) Stats row: distance, duration, avg / max speed
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
-            Text(trip.distanceKmString(), style = MaterialTheme.typography.bodyMedium)
-            Text("${trip.durationMin()} min", style = MaterialTheme.typography.bodyMedium)
-            Text("Avg: ${trip.avgSpeedString()}", style = MaterialTheme.typography.bodyMedium)
-            Text("Max: ${trip.maxSpeedString()}", style = MaterialTheme.typography.bodyMedium)
-        }
-
-        Spacer(modifier = Modifier.height(8.dp))
-
-        // 3) Mini‐map showing the trip polyline
-        // We center the mini‐map on the first point with a modest zoom.
-        val startPoint = trip.points.firstOrNull()
-        val miniCameraPositionState = rememberCameraPositionState {
-            position = if (startPoint != null) {
-                CameraPosition.fromLatLngZoom(startPoint, 14f)
-            } else {
-                CameraPosition.fromLatLngZoom(LatLng(0.0, 0.0), 2f)
-            }
-        }
-
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(150.dp)
-                .padding(vertical = 4.dp)
-        ) {
-            GoogleMap(
-                modifier = Modifier.fillMaxSize(),
-                cameraPositionState = miniCameraPositionState,
-                properties = MapProperties(isMyLocationEnabled = false),
-                uiSettings = MapUiSettings(
-                    zoomControlsEnabled = false,
-                    scrollGesturesEnabled = false,
-                    zoomGesturesEnabled = false,
-                    mapToolbarEnabled = false,
-                    myLocationButtonEnabled = false
-                )
-            ) {
-                if (trip.points.size >= 2) {
-                    Polyline(
-                        points = trip.points,
-                        color = MaterialTheme.colorScheme.primary,
-                        width = 6f
-                    )
+    // ─────────── Dialog: Confirmare ștergere favorite ───────────
+    if (showDeleteConfirmDialog && favoriteToDelete != null) {
+        AlertDialog(
+            onDismissRequest = { showDeleteConfirmDialog = false },
+            title = { Text("Remove Favorite") },
+            text = { Text("Do you want to remove \"${favoriteToDelete!!.name}\"?") },
+            confirmButton = {
+                TextButton(onClick = {
+                    Firebase.firestore
+                        .collection("fav-locations")
+                        .document(favoriteToDelete!!.id)
+                        .delete()
+                        .addOnSuccessListener {
+                            favoritesList.remove(favoriteToDelete!!)
+                            Toast.makeText(
+                                context,
+                                "Favorite removed",
+                                Toast.LENGTH_SHORT
+                            ).show()
+                        }
+                        .addOnFailureListener {
+                            Toast.makeText(
+                                context,
+                                "Error removing favorite",
+                                Toast.LENGTH_SHORT
+                            ).show()
+                        }
+                    favoriteToDelete = null
+                    showDeleteConfirmDialog = false
+                }) {
+                    Text("Yes")
                 }
-                // Optionally place a small start/end marker:
-                trip.points.firstOrNull()?.let { first ->
-                    Marker(
-                        state = MarkerState(position = first),
-                        icon = BitmapDescriptorFactory.defaultMarker(BitmapDescriptorFactory.HUE_GREEN),
-                        title = "Start"
-                    )
-                }
-                trip.points.lastOrNull()?.let { last ->
-                    Marker(
-                        state = MarkerState(position = last),
-                        icon = BitmapDescriptorFactory.defaultMarker(BitmapDescriptorFactory.HUE_RED),
-                        title = "End"
-                    )
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    favoriteToDelete = null
+                    showDeleteConfirmDialog = false
+                }) {
+                    Text("No")
                 }
             }
-        }
+        )
     }
 }
 
-
-/** Handles requesting ACCESS_FINE_LOCATION. */
+/* ------------------------------ Request Location Permission ------------------------------ */
 @Composable
 fun RequestLocationPermission(onPermissionGranted: () -> Unit) {
     val context = LocalContext.current
-    val launcher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.RequestPermission()
-    ) { granted ->
-        if (granted) {
-            onPermissionGranted()
-        } else {
-            Toast.makeText(
-                context,
-                "Location permission is required",
-                Toast.LENGTH_LONG
-            ).show()
+    val launcher =
+        rememberLauncherForActivityResult(contract = ActivityResultContracts.RequestPermission()) { granted ->
+            if (granted) {
+                onPermissionGranted()
+            } else {
+                Toast.makeText(
+                    context,
+                    "Location permission is required",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
         }
-    }
-
     LaunchedEffect(Unit) {
         if (ActivityCompat.checkSelfPermission(
                 context,
@@ -639,4 +795,3 @@ fun RequestLocationPermission(onPermissionGranted: () -> Unit) {
         }
     }
 }
-
