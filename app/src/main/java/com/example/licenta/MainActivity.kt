@@ -1,4 +1,3 @@
-
 package com.example.licenta
 
 import android.content.Intent
@@ -29,8 +28,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // ––––––––––––––––––––––
-        // Initialize Firebase & Places
+        // — Initialize Firebase & Google Places
         Firebase.initialize(this)
         auth = FirebaseAuth.getInstance()
 
@@ -38,23 +36,21 @@ class MainActivity : ComponentActivity() {
             Places.initialize(applicationContext, getString(R.string.google_api_key))
         }
 
-        // ––––––––––––––––––––––
-        // Configure Google Sign-In
+        // — Google Sign-In setup
         val gso = GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
             .requestIdToken(getString(R.string.default_web_client_id))
             .requestEmail()
             .build()
         googleSignInClient = GoogleSignIn.getClient(this, gso)
 
-        // ––––––––––––––––––––––
-        // Jetpack Compose content
+        // — Jetpack Compose UI
         setContent {
             LicentaTheme {
+                val context = LocalContext.current
                 var currentScreen by remember { mutableStateOf(if (auth.currentUser != null) "home" else "signUp") }
                 var selectedCar by remember { mutableStateOf<Car?>(null) }
-                val context = LocalContext.current
 
-                // Launcher for Google SignIn Activity
+                // — Google Sign-In Launcher
                 val launcher = rememberLauncherForActivityResult(
                     contract = ActivityResultContracts.StartActivityForResult()
                 ) { result ->
@@ -75,6 +71,7 @@ class MainActivity : ComponentActivity() {
                     }
                 }
 
+                // — Navigation Between Screens
                 when (currentScreen) {
                     "signUp" -> {
                         SignUpPage(
@@ -85,6 +82,7 @@ class MainActivity : ComponentActivity() {
                             }
                         )
                     }
+
                     "home" -> {
                         HomePage(
                             onLogout = {
@@ -93,32 +91,40 @@ class MainActivity : ComponentActivity() {
                                 currentScreen = "signUp"
                             },
                             onNavigateToMapPage = { currentScreen = "map" },
-                            onNavigateToSwitchPage = { currentScreen = "switch" },
-                            onNavigateToWalletPage = { currentScreen = "wallet" },
+                            onNavigateToGaragePage = { currentScreen = "garage" },
+                            onNavigateToSettingsPage = { currentScreen = "settings" },
                             selectedCar = selectedCar,
                             onCarSelected = { car -> selectedCar = car }
                         )
                     }
+
                     "map" -> {
                         MapPage(
-                            onNavigateToSwitchPage = { currentScreen = "switch" },
+                            onNavigateToGaragePage = { currentScreen = "garage" },
                             onNavigateBack = { currentScreen = "home" },
-                            onNavigateToWalletPage = { currentScreen = "wallet" }
+                            onNavigateToSettingsPage = { currentScreen = "settings" }
                         )
                     }
-                    "switch" -> {
-                        SwitchPage(
+
+                    "garage" -> {
+                        GaragePage(
                             onNavigateToMapPage = { currentScreen = "map" },
                             onNavigateBack = { currentScreen = "home" },
-                            onNavigateToWalletPage = { currentScreen = "wallet" },
+                            onNavigateToSettingsPage = { currentScreen = "settings" },
                             onCarSelected = { car -> selectedCar = car }
                         )
                     }
-                    "wallet" -> {
-                        WalletPage(
+
+                    "settings" -> {
+                        SettingsPage(
                             onNavigateToMapPage = { currentScreen = "map" },
-                            onNavigateToSwitchPage = { currentScreen = "switch" },
-                            onNavigateBack = { currentScreen = "home" }
+                            onNavigateToGaragePage = { currentScreen = "garage" },
+                            onNavigateBack = { currentScreen = "home" },
+                            onLogoutNavigateToSignUp = {
+                                auth.signOut()
+                                googleSignInClient.signOut()
+                                currentScreen = "signUp"
+                            }
                         )
                     }
                 }

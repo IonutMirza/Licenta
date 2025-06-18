@@ -14,6 +14,8 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.*
@@ -27,10 +29,12 @@ import androidx.compose.ui.unit.dp
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import com.google.android.gms.location.*
+import com.google.android.gms.maps.CameraUpdateFactory
 import com.google.android.gms.maps.model.CameraPosition
 import com.google.android.gms.maps.model.LatLng
 import com.google.android.gms.maps.model.BitmapDescriptor
 import com.google.android.gms.maps.model.BitmapDescriptorFactory
+import com.google.android.gms.maps.model.LatLngBounds
 import com.google.maps.android.compose.*
 import com.google.android.libraries.places.api.Places
 import com.google.android.libraries.places.api.model.AutocompletePrediction
@@ -45,7 +49,28 @@ import com.google.firebase.firestore.ktx.firestore
 import com.google.firebase.auth.ktx.auth
 import com.google.firebase.ktx.Firebase
 
-/* ------------------ UTILS: Transformă vector drawable în BitmapDescriptor ------------------ */
+data class TripPoint(val lat: Double, val lng: Double)
+
+fun loadTripPath(tripId: Long, onLoaded: (List<LatLng>) -> Unit) {
+    Firebase.firestore
+        .collection("trips")
+        .document(tripId.toString())
+        .collection("path")
+        .orderBy("index")
+        .get()
+        .addOnSuccessListener { result ->
+            val path = result.mapNotNull { doc ->
+                val lat = doc.getDouble("lat") ?: return@mapNotNull null
+                val lng = doc.getDouble("lng") ?: return@mapNotNull null
+                LatLng(lat, lng)
+            }
+            onLoaded(path)
+        }
+        .addOnFailureListener {
+            onLoaded(emptyList())
+        }
+}
+
 fun bitmapDescriptorFromVector(context: Context, vectorResId: Int): BitmapDescriptor {
     val drawable: Drawable = ContextCompat.getDrawable(context, vectorResId)!!
     val bitmap = Bitmap.createBitmap(
@@ -59,7 +84,7 @@ fun bitmapDescriptorFromVector(context: Context, vectorResId: Int): BitmapDescri
     return BitmapDescriptorFactory.fromBitmap(bitmap)
 }
 
-/* ------------ START LOCATION UPDATES -> trimite lat, lng, speed(km/h), timestamp ------------- */
+
 @SuppressLint("MissingPermission")
 fun startLocationUpdates(
     context: Context,
@@ -81,24 +106,29 @@ fun startLocationUpdates(
     fusedClient.requestLocationUpdates(request, callback, Looper.getMainLooper())
 }
 
-/* ----------------------------- TRIP RECORD data class (hardcodate) --------------------------- */
+
 data class TripRecord(
     val id: Long,
     val startTimeMs: Long,
     val endTimeMs: Long,
     val distanceMeters: Float,
     val avgSpeedKmh: Float,
-    val maxSpeedKmh: Float
+    val maxSpeedKmh: Float,
+    val hardBrakes: Int = 0,
+    val hardAccelerations: Int = 0,
+    val score: Float = 5.0f
 ) {
     fun formattedDescription(): String {
         val distKm = String.format("%.1f", distanceMeters / 1000f)
         val durMin = (endTimeMs - startTimeMs) / 60000
         val avg = String.format("%.1f", avgSpeedKmh)
-        return "· $distKm km • $durMin min • avg $avg km/h"
+        val max = String.format("%.0f", maxSpeedKmh)
+        val stars = "★".repeat(score.toInt()) + "☆".repeat(5 - score.toInt())
+        return "· $distKm km • $durMin min\n  avg $avg km/h • max $max km/h\n  🚀 x$hardAccelerations  🛑 x$hardBrakes\n  Rating: $score/5.0 $stars"
     }
 }
 
-/* ----------------------------- DATA CLASS Favorite ------------------------------------------ */
+
 data class Favorite(
     val id: String,
     val name: String,
@@ -106,13 +136,6 @@ data class Favorite(
     val longitude: Double
 )
 
-
-
-// ====== 2.b Funcții pentru Firestore: ======
-
-/**
- * Salvează un TripRecord în colecția top‐level "trips".
- */
 fun saveTripToFirestoreTopLevel(trip: TripRecord) {
     val uid = Firebase.auth.currentUser?.uid ?: return
     val data = hashMapOf(
@@ -122,11 +145,16 @@ fun saveTripToFirestoreTopLevel(trip: TripRecord) {
         "distanceMeters" to trip.distanceMeters,
         "avgSpeedKmh" to trip.avgSpeedKmh,
         "maxSpeedKmh" to trip.maxSpeedKmh,
+        "hardBrakes" to trip.hardBrakes,
+        "hardAccelerations" to trip.hardAccelerations,
+        "score" to trip.score,
+        "tripId" to trip.id,
         "createdAt" to FieldValue.serverTimestamp()
     )
     Firebase.firestore
         .collection("trips")
-        .add(data)
+        .document(trip.id.toString())  // <- Folosim id-ul explicit
+        .set(data)
         .addOnSuccessListener {
             // Trip salvat cu succes
         }
@@ -135,9 +163,24 @@ fun saveTripToFirestoreTopLevel(trip: TripRecord) {
         }
 }
 
-/**
- * Încarcă ultimele 10 TripRecord‐uri ale utilizatorului curent din colecția top‐level "trips".
- */
+fun saveTripPathToFirestore(tripId: Long, path: List<LatLng>) {
+    val uid = Firebase.auth.currentUser?.uid ?: return
+    val batch = Firebase.firestore.batch()
+    val tripDoc = Firebase.firestore.collection("trips").document(tripId.toString())
+    path.forEachIndexed { index, latLng ->
+        val pointData = hashMapOf(
+            "lat" to latLng.latitude,
+            "lng" to latLng.longitude,
+            "index" to index,
+            "uid" to uid
+        )
+        val pointRef = tripDoc.collection("path").document(index.toString())
+        batch.set(pointRef, pointData)
+    }
+    batch.commit()
+}
+
+
 fun loadLast10TripsFromFirestoreTopLevel(onLoaded: (List<TripRecord>) -> Unit) {
     val uid = Firebase.auth.currentUser?.uid ?: return
     Firebase.firestore
@@ -149,19 +192,27 @@ fun loadLast10TripsFromFirestoreTopLevel(onLoaded: (List<TripRecord>) -> Unit) {
         .addOnSuccessListener { querySnapshot ->
             val list = mutableListOf<TripRecord>()
             for (doc in querySnapshot.documents) {
+                val id = doc.getLong("tripId") ?: continue // <--- CORECT
                 val start = doc.getLong("startTimeMs") ?: continue
                 val end = doc.getLong("endTimeMs") ?: continue
                 val dist = doc.getDouble("distanceMeters")?.toFloat() ?: continue
                 val avg  = doc.getDouble("avgSpeedKmh")?.toFloat() ?: continue
                 val max  = doc.getDouble("maxSpeedKmh")?.toFloat() ?: continue
+                val brakes = doc.getLong("hardBrakes")?.toInt() ?: 0
+                val accels = doc.getLong("hardAccelerations")?.toInt() ?: 0
+                val score = doc.getDouble("score")?.toFloat() ?: 5.0f
+
                 list.add(
                     TripRecord(
-                        id = doc.id.hashCode().toLong(),
+                        id = id,
                         startTimeMs = start,
                         endTimeMs = end,
                         distanceMeters = dist,
                         avgSpeedKmh = avg,
-                        maxSpeedKmh = max
+                        maxSpeedKmh = max,
+                        hardBrakes = brakes,
+                        hardAccelerations = accels,
+                        score = score
                     )
                 )
             }
@@ -172,18 +223,16 @@ fun loadLast10TripsFromFirestoreTopLevel(onLoaded: (List<TripRecord>) -> Unit) {
         }
 }
 
-
-
-// ====== 3. Composable MapPage cu integrare Firestore ======
-
 @SuppressLint("MissingPermission")
 @Composable
 fun MapPage(
     onNavigateBack: () -> Unit,
-    onNavigateToSwitchPage: () -> Unit,
-    onNavigateToWalletPage: () -> Unit
+    onNavigateToGaragePage: () -> Unit,
+    onNavigateToSettingsPage: () -> Unit
 ) {
     val context = LocalContext.current
+
+
     val apiKey = context.getString(R.string.google_api_key)
 
     // 1) Inițializează Google Places API (o singură dată)
@@ -222,6 +271,20 @@ fun MapPage(
     val tripsList = remember { mutableStateListOf<TripRecord>() }
     var showTripsDialog by remember { mutableStateOf(false) }
 
+    var tripStartTimestamp by remember { mutableStateOf<Long?>(null) }
+    var tripDistanceMeters by remember { mutableStateOf(0f) }
+    var tripMaxSpeedKmh by remember { mutableStateOf(0f) }
+    val tripPath = remember { mutableStateListOf<LatLng>() }
+
+    // Noi stări pentru contorizare frânări/accelerări bruște
+    var prevSpeedKmh by remember { mutableStateOf<Float?>(null) }
+    var hardBrakes by remember { mutableStateOf(0) }
+    var hardAccelerations by remember { mutableStateOf(0) }
+
+    val selectedTripPath = remember { mutableStateListOf<LatLng>() }
+    var selectedTripId by remember { mutableStateOf<Long?>(null) }
+
+
     // Încarcă ultimele 10 tripuri la lansare:
     LaunchedEffect(Unit) {
         loadLast10TripsFromFirestoreTopLevel { loaded ->
@@ -258,45 +321,61 @@ fun MapPage(
     RequestLocationPermission {
         startLocationUpdates(context) { lat, lng, speedKmh, timestamp ->
             val newLatLng = LatLng(lat, lng)
+            if (tripStartTimestamp != null) {
+                tripPath.add(newLatLng)
+            }
             currentLocation = newLatLng
             cameraPositionState.position = CameraPosition.fromLatLngZoom(newLatLng, 15f)
             currentSpeedKmh = speedKmh
 
+            // Logică stare + accelerări/frânări bruște
             if (speedKmh >= 10f) {
                 lastDriveTimestamp = timestamp
                 stopStartTimestamp = null
                 status = "Drive"
                 statusEmoji = "🚗"
-            } else {
-                val now = timestamp
-                if (lastDriveTimestamp != null) {
-                    if (stopStartTimestamp == null) {
-                        stopStartTimestamp = now
-                    }
-                    val elapsed = now - (stopStartTimestamp ?: now)
-                    if (elapsed >= 5 * 60 * 1000) {
-                        status = "Walking"
-                        statusEmoji = "🚶"
-                    } else {
-                        status = "Drive"
-                        statusEmoji = "🚗"
-                    }
+
+                if (tripStartTimestamp == null) {
+                    tripStartTimestamp = timestamp
+                    tripDistanceMeters = 0f
+                    tripMaxSpeedKmh = speedKmh
+                    hardBrakes = 0
+                    hardAccelerations = 0
                 } else {
-                    if (stopStartTimestamp == null) {
-                        stopStartTimestamp = now
+                    tripDistanceMeters += 5f // simulare distanță
+                    if (speedKmh > tripMaxSpeedKmh) tripMaxSpeedKmh = speedKmh
+
+                    prevSpeedKmh?.let { prev ->
+                        val delta = speedKmh - prev
+                        if (delta > 20) hardAccelerations++
+                        if (delta < -20) hardBrakes++
                     }
-                    val elapsed = now - (stopStartTimestamp ?: now)
-                    if (elapsed >= 5 * 60 * 1000) {
-                        status = "Walking"
-                        statusEmoji = "🚶"
-                    } else {
-                        status = "No Move"
-                        statusEmoji = "🛑"
-                    }
+                }
+                prevSpeedKmh = speedKmh
+            } else {
+                prevSpeedKmh = speedKmh
+                val now = timestamp
+
+                if (stopStartTimestamp == null) {
+                    stopStartTimestamp = now
+                }
+
+                val elapsed = now - stopStartTimestamp!!
+                if (elapsed >= 5 * 60 * 1000) {
+                    status = "Walking"
+                    statusEmoji = "🚶"
+                } else if (lastDriveTimestamp != null) {
+                    status = "Drive"
+                    statusEmoji = "🚗"
+                } else {
+                    status = "No Move"
+                    statusEmoji = "🛑"
                 }
             }
         }
     }
+
+
 
     /* ─────────────── UI-ul principal ────────────── */
     Column(
@@ -389,6 +468,14 @@ fun MapPage(
                         }
                     )
                 }
+                if (selectedTripPath.isNotEmpty()) {
+                    Polyline(
+                        points = selectedTripPath.toList(),
+                        color = Color.Blue,
+                        width = 6f
+                    )
+                }
+
             }
 
             // Buton “View Trips” (FAB stânga-jos)
@@ -493,9 +580,51 @@ fun MapPage(
                     style = MaterialTheme.typography.bodyLarge
                 )
             }
-        }
 
-        // — 5️⃣ Bara de navigare jos (Home, Map, Garage, Settings)
+            if (tripStartTimestamp != null) {
+                Button(
+                    onClick = {
+                        val now = System.currentTimeMillis()
+                        val durationMs = now - tripStartTimestamp!!
+                        if (durationMs >= 10000) {
+                            val avgSpeed =
+                                if (durationMs > 0) (tripDistanceMeters / (durationMs / 1000f)) * 3.6f else 0f
+                            val penalties = hardBrakes + hardAccelerations
+                            val score = (5.0f - 0.1f * penalties).coerceIn(0f, 5.0f)
+                            val trip = TripRecord(
+                                id = System.currentTimeMillis(),
+                                startTimeMs = tripStartTimestamp!!,
+                                endTimeMs = now,
+                                distanceMeters = tripDistanceMeters,
+                                avgSpeedKmh = avgSpeed,
+                                maxSpeedKmh = tripMaxSpeedKmh,
+                                hardBrakes = hardBrakes,
+                                hardAccelerations = hardAccelerations,
+                                score = score
+                            )
+                            saveTripToFirestoreTopLevel(trip)
+                            saveTripPathToFirestore(trip.id, tripPath.toList())
+                            Toast.makeText(context, "Trip saved manually", Toast.LENGTH_SHORT).show()
+                        } else {
+                            Toast.makeText(context, "Trip too short to save", Toast.LENGTH_SHORT).show()
+                        }
+                        tripStartTimestamp = null
+                        tripDistanceMeters = 0f
+                        tripMaxSpeedKmh = 0f
+                        hardBrakes = 0
+                        hardAccelerations = 0
+                        prevSpeedKmh = null
+                        tripPath.clear()
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 12.dp)
+                ) {
+                    Text("Save Trip")
+                }
+            }
+
+            // — 5️⃣ Bara de navigare jos (Home, Map, Garage, Settings)
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -516,14 +645,14 @@ fun MapPage(
                     tint = Color.Black
                 )
             }
-            IconButton(onClick = onNavigateToSwitchPage, modifier = Modifier.size(50.dp)) {
+            IconButton(onClick = onNavigateToGaragePage, modifier = Modifier.size(50.dp)) {
                 Icon(
                     painter = painterResource(R.drawable.garage),
                     contentDescription = "Garage",
                     tint = Color.LightGray
                 )
             }
-            IconButton(onClick = onNavigateToWalletPage, modifier = Modifier.size(50.dp)) {
+            IconButton(onClick = onNavigateToSettingsPage, modifier = Modifier.size(50.dp)) {
                 Icon(
                     painter = painterResource(R.drawable.settings),
                     contentDescription = "Settings",
@@ -654,14 +783,34 @@ fun MapPage(
             },
             title = { Text("My Last 10 Trips") },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    if (tripsList.isEmpty()) {
-                        Text(text = "No trips yet.")
-                    } else {
-                        tripsList.forEach { trip ->
-                            Text(text = trip.formattedDescription())
+                if (tripsList.isEmpty()) {
+                    Text(text = "No trips yet.")
+                } else {
+                    LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        items(tripsList.toList(), key = { it.id }) { trip ->
+                            Column(modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    selectedTripId = trip.id
+                                    loadTripPath(trip.id) { path ->
+                                        selectedTripPath.clear()
+                                        selectedTripPath.addAll(path)
+
+                                        if (path.isNotEmpty()) {
+                                            val boundsBuilder = LatLngBounds.builder()
+                                            path.forEach { boundsBuilder.include(it) }
+                                            val bounds = boundsBuilder.build()
+                                            cameraPositionState.move(
+                                                CameraUpdateFactory.newLatLngBounds(bounds, 100)
+                                            )
+                                        }
+                                    }
+                                }) {
+                                Text(text = trip.formattedDescription())
+                            }
                         }
                     }
+
                 }
             }
         )
@@ -765,6 +914,7 @@ fun MapPage(
             }
         )
     }
+}
 }
 
 /* ------------------------------ Request Location Permission ------------------------------ */

@@ -6,7 +6,7 @@ import android.app.Activity
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothSocket
-import android.content.pm.PackageManager
+import android.content.Context
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -15,7 +15,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -23,15 +23,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.core.app.ActivityCompat
-import androidx.core.content.ContextCompat
-import androidx.lifecycle.lifecycleScope
 import com.example.licenta.model.Car
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FirebaseFirestore
-import com.google.firebase.firestore.Query
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -41,56 +38,66 @@ import java.io.InputStream
 import java.io.OutputStream
 import java.util.*
 
+
 @SuppressLint("MissingPermission", "ContextCastToActivity")
 @Composable
 fun HomePage(
     onLogout: () -> Unit,
     onNavigateToMapPage: () -> Unit,
-    onNavigateToSwitchPage: () -> Unit,
-    onNavigateToWalletPage: () -> Unit,
+    onNavigateToGaragePage: () -> Unit,
+    onNavigateToSettingsPage: () -> Unit,
     selectedCar: Car?,
     onCarSelected: (Car) -> Unit
 ) {
     val context = LocalContext.current
-    val activity = (LocalContext.current as? Activity)
+    val prefs = context.getSharedPreferences("app_settings", Context.MODE_PRIVATE)
+    val darkModeEnabled = remember { mutableStateOf(prefs.getBoolean("dark_mode", false)) }
+
+    // Reîncarcă la fiecare recompoziție pentru a reflecta toggle-ul din altă pagină
+    LaunchedEffect(Unit) {
+        snapshotFlow { prefs.getBoolean("dark_mode", false) }
+            .collect { darkModeEnabled.value = it }
+    }
+
+    val backgroundColor = if (darkModeEnabled.value) Color(0xFF121212) else Color.White
+    val textColor = if (darkModeEnabled.value) Color.White else Color.Black
+
     val user = FirebaseAuth.getInstance().currentUser
     val username = user?.email?.substringBefore("@") ?: "User"
     val firestore = FirebaseFirestore.getInstance()
-    val bluetoothAdapter: BluetoothAdapter? = BluetoothAdapter.getDefaultAdapter()
-
-    // — Firestore “cars” list states —
     var cars by remember { mutableStateOf(emptyList<Car>()) }
+
     var showAddCarDialog by remember { mutableStateOf(false) }
     var brand by remember { mutableStateOf("") }
     var model by remember { mutableStateOf("") }
     var year by remember { mutableStateOf("") }
     var licensePlate by remember { mutableStateOf("") }
 
-    // — OBD/Bluetooth states —
     var bluetoothStatus by remember { mutableStateOf("Disconnected") }
     var connectedDeviceName by remember { mutableStateOf<String?>(null) }
     var isObdConnected by remember { mutableStateOf(false) }
-
-    // Hold the actual BluetoothSocket / streams once connected:
     var obdSocket by remember { mutableStateOf<BluetoothSocket?>(null) }
     var obdOutStream by remember { mutableStateOf<OutputStream?>(null) }
     var obdInStream by remember { mutableStateOf<InputStream?>(null) }
-
-    // — Dialog-control states for real OBD data —
     var showObdSpecsDialog by remember { mutableStateOf(false) }
     var obdSpecsRaw by remember { mutableStateOf<String?>(null) }
-
     var showObdLiveDataDialog by remember { mutableStateOf(false) }
-    // We'll fill this with a map of “Parameter name” → “value”
     var liveDataMap by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
+    val bluetoothAdapter: BluetoothAdapter? = BluetoothAdapter.getDefaultAdapter()
 
-    // — Permission launcher for BLUETOOTH_CONNECT, BLUETOOTH_SCAN, ACCESS_FINE_LOCATION —
+    var showObdErrorDialog by remember { mutableStateOf(false) }
+    var errorCodes by remember { mutableStateOf<List<String>>(emptyList()) }
+
+    var isEcuReady by remember { mutableStateOf(false) }
+    var ecuStatus by remember { mutableStateOf("ECU: Not initialized") }
+    var showObdClearConfirmDialog by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope() // NEW
+
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { permissions ->
         val allGranted = permissions.values.all { it }
         if (allGranted) {
-            // If all requested perms granted, attempt actual OBD connection
             attemptObdConnection(
                 context = context,
                 bluetoothAdapter = bluetoothAdapter,
@@ -101,6 +108,13 @@ fun HomePage(
                     obdOutStream = outSt
                     obdInStream = inSt
                     bluetoothStatus = if (success) "Connected" else "Failed"
+
+                    if (success && inSt != null && outSt != null) {
+                        initElm(inSt, outSt) { ecuReady ->
+                            isEcuReady = ecuReady
+                            ecuStatus = if (ecuReady) "ECU: Ready" else "ECU: Init Fail"
+                        }
+                    }
                 }
             )
         } else {
@@ -108,34 +122,41 @@ fun HomePage(
         }
     }
 
-    // — Firestore: load “cars” once user.uid changes —
-    LaunchedEffect(user?.uid) {
-        user?.uid?.let { uid ->
+    DisposableEffect(user?.uid) {
+        val listenerRegistration = user?.uid?.let { uid ->
             firestore.collection("cars1")
                 .whereEqualTo("userId", uid)
-                .get()
-                .addOnSuccessListener { result ->
-                    cars = result.map { it.toObject(Car::class.java) }
-                    if (selectedCar == null && cars.isNotEmpty()) {
-                        onCarSelected(cars.first())
+                .addSnapshotListener { snapshot, error ->
+                    if (error != null) {
+                        Toast.makeText(context, "Error loading cars: ${error.message}", Toast.LENGTH_SHORT).show()
+                        return@addSnapshotListener
+                    }
+                    if (snapshot != null) {
+                        val loaded = snapshot.documents.mapNotNull { doc ->
+                            doc.toObject(Car::class.java)
+                        }
+                        cars = loaded
+                        if (selectedCar == null && cars.isNotEmpty()) {
+                            onCarSelected(cars.first())
+                        }
                     }
                 }
         }
+        onDispose { listenerRegistration?.remove() }
     }
 
     Column(
         modifier = Modifier
             .fillMaxSize()
+            .background(backgroundColor)
             .padding(24.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        // — Title & Welcome text —
         Text("Drive like a Pro", fontSize = 32.sp, color = MaterialTheme.colorScheme.primary)
         Spacer(Modifier.height(8.dp))
-        Text("Welcome, $username!", fontSize = 24.sp)
+        Text("Welcome, $username!", fontSize = 24.sp, color = textColor)
         Spacer(Modifier.height(16.dp))
 
-        // — Bluetooth status row —
         Text(
             text = "Bluetooth Status: $bluetoothStatus" + (connectedDeviceName?.let { " - $it" } ?: ""),
             color = if (isObdConnected) Color.Green else Color.Red,
@@ -143,17 +164,26 @@ fun HomePage(
         )
         Spacer(Modifier.height(16.dp))
 
-        // — Selected Car display —
+        Text(
+            text = ecuStatus,
+            color = when {
+                isEcuReady -> Color.Green
+                isObdConnected -> Color(0xFFFFA000) // amber
+                else -> Color.Red
+            },
+            fontSize = 16.sp
+        )
+        Spacer(Modifier.height(16.dp))
+
         selectedCar?.let {
             Text(
                 text = "Selected Car: ${it.brand} ${it.model}",
                 fontSize = 18.sp,
-                color = MaterialTheme.colorScheme.onBackground
+                color = textColor
             )
             Spacer(Modifier.height(16.dp))
         }
 
-        // — List of cars (LazyColumn) —
         LazyColumn(modifier = Modifier.weight(1f)) {
             items(cars) { car ->
                 Text(
@@ -163,26 +193,20 @@ fun HomePage(
                         .clickable { onCarSelected(car) }
                         .background(if (car == selectedCar) Color.LightGray else Color.Transparent)
                         .padding(8.dp),
-                    fontSize = 16.sp
+                    fontSize = 16.sp,
+                    color = textColor
                 )
             }
         }
 
         Spacer(Modifier.height(16.dp))
-
-        // — “Add New Car” button —
-        Button(
-            onClick = { showAddCarDialog = true },
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Text("Add New Car")
+        Button(onClick = { showAddCarDialog = true }, modifier = Modifier.fillMaxWidth()) {
+            Text("Add New Car", color = textColor)
         }
         Spacer(Modifier.height(8.dp))
 
-        // — “Connect to OBD” actual button —
         Button(
             onClick = {
-                // Request the three permissions in one shot:
                 permissionLauncher.launch(
                     arrayOf(
                         Manifest.permission.BLUETOOTH_CONNECT,
@@ -193,41 +217,56 @@ fun HomePage(
             },
             modifier = Modifier.fillMaxWidth()
         ) {
-            Text("Connect to OBD")
+            Text("Connect to OBD", color = textColor)
         }
 
-        if (isObdConnected) {
+        if (isObdConnected && isEcuReady) {
             Spacer(Modifier.height(8.dp))
-            // — Real “View Data Specifications” button —
             Button(
                 onClick = {
-                    liveDataMap = emptyMap() // clear any previous
+                    liveDataMap = emptyMap()
                     showObdSpecsDialog = true
-                    // Actual code to read PID 0100 will run in the dialog’s LaunchedEffect
                 },
                 modifier = Modifier.fillMaxWidth(),
                 colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2E7D32))
             ) {
                 Text("View Data Specifications", color = Color.White)
             }
-
             Spacer(Modifier.height(8.dp))
-            // — Real “Read Live Data” button —
             Button(
                 onClick = {
                     liveDataMap = emptyMap()
                     showObdLiveDataDialog = true
-                    // Actual code to read live PIDs will run in the dialog’s LaunchedEffect
                 },
                 modifier = Modifier.fillMaxWidth(),
                 colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1565C0))
             ) {
                 Text("Read Live Data", color = Color.White)
             }
+            Spacer(Modifier.height(8.dp))
+            Button(
+                onClick = {
+                    errorCodes = emptyList()
+                    showObdErrorDialog = true
+                },
+                modifier = Modifier.fillMaxWidth(),
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF8E24AA)) // mov
+            ) {
+                Text("Read Error Codes", color = Color.White)
+            }
+            Spacer(Modifier.height(8.dp))
+            Button(
+                onClick = {
+                    showObdClearConfirmDialog = true
+                },
+                modifier = Modifier.fillMaxWidth(),
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFD32F2F))
+            ) {
+                Text("Clear Error Codes", color = Color.White)
+            }
         }
 
         Spacer(Modifier.height(8.dp))
-        // — Logout button —
         Button(
             onClick = onLogout,
             colors = ButtonDefaults.buttonColors(containerColor = Color.Red),
@@ -237,15 +276,14 @@ fun HomePage(
         }
 
         Spacer(Modifier.height(16.dp))
-        // — Bottom navigation bar (unchanged) —
         BottomNavigationBar(
             onMapClick = onNavigateToMapPage,
-            onSwitchClick = onNavigateToSwitchPage,
-            onWalletClick = onNavigateToWalletPage
+            onGarageClick = onNavigateToGaragePage,
+            onSettingsClick = onNavigateToSettingsPage,
+            //iconTintColor = textColor
         )
     }
 
-    // — “Add Car” dialog (unchanged) —
     AddCarDialog(
         show = showAddCarDialog,
         brand = brand,
@@ -255,46 +293,101 @@ fun HomePage(
         onDismiss = { showAddCarDialog = false },
         onConfirm = { b, m, y, lp ->
             val uid = user?.uid ?: return@AddCarDialog
-            val newCar = Car(b, m, y, lp, uid)
-            firestore.collection("cars1").add(newCar).addOnSuccessListener {
-                showAddCarDialog = false
-                brand = ""; model = ""; year = ""; licensePlate = ""
-                // reload list
-                firestore.collection("cars1")
-                    .whereEqualTo("userId", uid)
-                    .get()
-                    .addOnSuccessListener { result ->
-                        cars = result.map { it.toObject(Car::class.java) }
-                        if (selectedCar == null && cars.isNotEmpty()) {
-                            onCarSelected(cars.first())
-                        }
-                    }
+            val yearInt = y.toIntOrNull()
+            if (b.isBlank() || m.isBlank() || yearInt == null || lp.isBlank()) {
+                Toast.makeText(context, "Complete all fields correctly", Toast.LENGTH_SHORT).show()
+                return@AddCarDialog
             }
-        }
+            firestore.collection("cars1")
+                .whereEqualTo("userId", uid)
+                .whereEqualTo("licensePlate", lp.trim())
+                .get()
+                .addOnSuccessListener { querySnapshot ->
+                    if (querySnapshot.documents.isNotEmpty()) {
+                        Toast.makeText(context, "This car already exists.", Toast.LENGTH_SHORT).show()
+                    } else {
+                        val docRef = firestore.collection("cars1").document()
+                        val car = Car(
+                            id = docRef.id,
+                            brand = b.trim(),
+                            model = m.trim(),
+                            year = yearInt,
+                            licensePlate = lp.trim(),
+                            userId = uid
+                        )
+                        docRef.set(car)
+                            .addOnSuccessListener {
+                                Toast.makeText(context, "Car saved successfully", Toast.LENGTH_SHORT).show()
+                                showAddCarDialog = false
+                                brand = ""; model = ""; year = ""; licensePlate = ""
+                            }
+                            .addOnFailureListener { e ->
+                                Toast.makeText(context, "Error saving: ${e.message}", Toast.LENGTH_SHORT).show()
+                            }
+                    }
+                }
+                .addOnFailureListener { e ->
+                    Toast.makeText(context, "Error checking duplicate: ${e.message}", Toast.LENGTH_SHORT).show()
+                }
+        },
+
     )
 
-    // — Dialog: “Data Specifications” (PID 0100) —
+    if (showObdClearConfirmDialog) {
+        AlertDialog(
+            onDismissRequest = { showObdClearConfirmDialog = false },
+            title = { Text("Confirm Clear Codes") },
+            text = { Text("Are you sure you want to clear all error codes?") },
+            confirmButton = {
+                TextButton(onClick = {
+                    showObdClearConfirmDialog = false
+                    scope.launch {
+                        val resp = sendElmCommand("04", obdInStream, obdOutStream)
+                        Toast.makeText(
+                            context,
+                            if (resp.contains("44")) "Codes cleared successfully" else "Failed to clear codes",
+                            Toast.LENGTH_SHORT
+                        ).show()
+                    }
+                }) {
+                    Text("Yes")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showObdClearConfirmDialog = false }) {
+                    Text("No")
+                }
+            }
+        )
+    }
+
     if (showObdSpecsDialog) {
         ObdSpecsDialog(
             obdInStream = obdInStream,
             obdOutStream = obdOutStream,
             onDismiss = { showObdSpecsDialog = false },
             rawResult = obdSpecsRaw
-        ) { raw ->
-            obdSpecsRaw = raw
-        }
+            //textColor = textColor
+        ) { raw -> obdSpecsRaw = raw }
     }
 
-    // — Dialog: “Live Data” (read RPM, Speed, Temp, Throttle) —
     if (showObdLiveDataDialog) {
         ObdLiveDataDialog(
             obdInStream = obdInStream,
             obdOutStream = obdOutStream,
             onDismiss = { showObdLiveDataDialog = false },
-            liveData = liveDataMap
-        ) { dataMap ->
-            liveDataMap = dataMap
-        }
+            liveData = liveDataMap,
+            //Color = textColor
+        ) { dataMap -> liveDataMap = dataMap }
+    }
+
+    if (showObdErrorDialog) {
+        ObdErrorCodesDialog(
+            obdInStream = obdInStream,
+            obdOutStream = obdOutStream,
+            onDismiss = { showObdErrorDialog = false },
+            errorCodes = errorCodes
+        ) { codes -> errorCodes = codes }
     }
 }
 
@@ -325,20 +418,17 @@ private fun attemptObdConnection(
         return
     }
 
-    // Find the first paired device whose name contains “OBD”
     val pairedDevices: Set<BluetoothDevice> = bluetoothAdapter.bondedDevices
     val obdDevice = pairedDevices.firstOrNull { it.name.contains("OBD", ignoreCase = true) }
 
     if (obdDevice == null) {
-        Toast.makeText(context, "No OBD device found among paired devices", Toast.LENGTH_SHORT).show()
+        Toast.makeText(context, "No OBD device found", Toast.LENGTH_SHORT).show()
         onConnectionResult(null, false, null, null, null)
         return
     }
 
-    // Everything looks good → attempt socket connection on a background thread
     Thread {
         try {
-            // Standard SPP UUID
             val SPP_UUID: UUID = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB")
             val socket = obdDevice.createRfcommSocketToServiceRecord(SPP_UUID)
             bluetoothAdapter.cancelDiscovery()
@@ -346,21 +436,90 @@ private fun attemptObdConnection(
 
             val outSt = socket.outputStream
             val inSt = socket.inputStream
-
-            // Notify success on UI thread
             (context as? Activity)?.runOnUiThread {
                 onConnectionResult(obdDevice.name, true, socket, outSt, inSt)
                 Toast.makeText(context, "Connected to ${obdDevice.name}", Toast.LENGTH_SHORT).show()
             }
         } catch (e: IOException) {
             (context as? Activity)?.runOnUiThread {
-                Toast.makeText(context, "Connection failed: ${e.message}", Toast.LENGTH_LONG).show()
+                Toast.makeText(context, "Connection error: ${e.message}", Toast.LENGTH_LONG).show()
                 onConnectionResult(obdDevice.name, false, null, null, null)
             }
         }
     }.start()
 }
 
+
+private fun initElm(inStream: InputStream, outStream: OutputStream, onResult: (Boolean) -> Unit) {
+    Thread {
+        val initCommands = listOf("ATZ", "ATE0", "ATL0", "ATS0", "ATH0", "ATSP0")
+        try {
+            for (cmd in initCommands) {
+                sendElm(cmd, outStream, inStream)
+                Thread.sleep(150)
+            }
+            val supported = sendElm("0100", outStream, inStream)
+            onResult(supported.contains("41 00") || supported.contains("4100"))
+        } catch (e: Exception) {
+            onResult(false)
+        }
+    }.start()
+}
+
+private fun sendElm(cmd: String, out: OutputStream, `in`: InputStream): String {
+    out.write((cmd.trim() + "\r").toByteArray())
+    out.flush()
+    val response = StringBuilder()
+    val buffer = ByteArray(1024)
+    var timeout = 0L
+    while (true) {
+        if (`in`.available() > 0) {
+            val len = `in`.read(buffer)
+            response.append(String(buffer, 0, len))
+            if (response.contains(">")) break
+        } else {
+            Thread.sleep(50)
+            timeout += 50
+            if (timeout > 3000) break
+        }
+    }
+    return response.toString().replace("\r", "").replace("\n", "").trim()
+}
+
+suspend fun sendElmCommand(
+    command: String,
+    inStream: InputStream?,
+    outStream: OutputStream?,
+    timeoutMs: Long = 1200L
+): String = withContext(Dispatchers.IO) {
+    if (inStream == null || outStream == null) return@withContext "STREAMS_NOT_READY"
+
+    try {
+        outStream.write((command.trim() + "\r").toByteArray())
+        outStream.flush()
+
+        val start = System.currentTimeMillis()
+        val buffer = ByteArray(256)
+        val sb = StringBuilder()
+
+        while (System.currentTimeMillis() - start < timeoutMs) {
+            if (inStream.available() > 0) {
+                val len = inStream.read(buffer)
+                sb.append(String(buffer, 0, len))
+                if (sb.contains(">")) break            // prompt = răspuns complet
+            }
+            delay(30)
+        }
+
+        return@withContext sb.toString()
+            .replace("\r", "")
+            .replace("\n", "")
+            .replace(">", "")
+            .trim()
+    } catch (e: IOException) {
+        return@withContext "ERR:${e.message}"
+    }
+}
 
 // ————————————————————————————————————————————————
 // Dialog for PID 0100 → read supported PIDs (raw hex) and display:
@@ -373,28 +532,13 @@ private fun ObdSpecsDialog(
     rawResult: String?,
     onRawResultReady: (String) -> Unit
 ) {
-    val scope = rememberCoroutineScope()
     var localRaw by remember { mutableStateOf(rawResult) }
 
-    // When dialog appears, if rawResult is null, we launch a coroutine to send “0100” and read:
     LaunchedEffect(Unit) {
-        if (localRaw == null && obdInStream != null && obdOutStream != null) {
-            withContext(Dispatchers.IO) {
-                try {
-                    // Send “0100\r”
-                    obdOutStream.write("0100\r".toByteArray())
-                    delay(200) // short delay to allow response
-                    val buffer = ByteArray(128)
-                    val bytesRead = obdInStream.read(buffer)
-                    val response = String(buffer, 0, bytesRead).trim()
-                    // We expect something like “4100BE1FA813” (for example)
-                    onRawResultReady(response)
-                    localRaw = response
-                } catch (e: IOException) {
-                    onRawResultReady("Error: ${e.message}")
-                    localRaw = "Error: ${e.message}"
-                }
-            }
+        if (localRaw == null) {
+            val resp = sendElmCommand("0100", obdInStream, obdOutStream)
+            onRawResultReady(resp)
+            localRaw = resp
         }
     }
 
@@ -404,15 +548,13 @@ private fun ObdSpecsDialog(
         text = {
             Column(modifier = Modifier.fillMaxWidth()) {
                 if (localRaw == null) {
-                    // still loading
                     Text("Loading…", fontSize = 16.sp)
                     LinearProgressIndicator(modifier = Modifier.fillMaxWidth().padding(top = 8.dp))
                 } else {
                     Text("Raw response: $localRaw", fontSize = 14.sp)
                     Spacer(Modifier.height(8.dp))
                     Text(
-                        "Interpreting bits → Each hex‐pair’s bits = supported PIDs.\n" +
-                                "(See OBD-II spec for full bit‐mapping.)",
+                        "Interpreting bits → Each hex‐pair’s bits = supported PIDs.\n(See OBD-II spec for full bit‐mapping.)",
                         fontSize = 12.sp,
                         color = Color.Gray
                     )
@@ -427,10 +569,6 @@ private fun ObdSpecsDialog(
     )
 }
 
-
-// ————————————————————————————————————————————————
-// Dialog for “Live Data”: read 010D (speed), 010C (RPM), 0105 (temp), 0111 (throttle)
-
 @Composable
 private fun ObdLiveDataDialog(
     obdInStream: InputStream?,
@@ -439,77 +577,42 @@ private fun ObdLiveDataDialog(
     liveData: Map<String, String>,
     onLiveDataReady: (Map<String, String>) -> Unit
 ) {
-    val scope = rememberCoroutineScope()
     var localData by remember { mutableStateOf(liveData) }
 
-    // When dialog appears, if localData is empty and streams exist, read all four PIDs:
     LaunchedEffect(Unit) {
         if (localData.isEmpty() && obdInStream != null && obdOutStream != null) {
             withContext(Dispatchers.IO) {
                 val results = mutableMapOf<String, String>()
 
-                // Helper to send a PID and read response
-                fun readObdPid(pid: String): String {
-                    return try {
-                        obdOutStream.write("$pid\r".toByteArray())
-                        Thread.sleep(200) // wait for response
-                        val buffer = ByteArray(128)
-                        val bytesRead = obdInStream.read(buffer)
-                        String(buffer, 0, bytesRead).trim()
-                    } catch (e: IOException) {
-                        "Err"
-                    }
-                }
+                suspend fun pid(p: String) = sendElmCommand(p, obdInStream, obdOutStream)
 
-                // 1) Vehicle speed (010D)
-                val raw010d = readObdPid("010D")
-                val speed =
-                    raw010d.takeIf { it.startsWith("41 0D".replace(" ", "")) }?.let {
-                        // remove any whitespace, then parse the 3rd byte as hex
-                        val hex = it.removeSpaces().substring(4, 6)
-                        hex.toIntOrNull(16)?.toString() + " km/h"
-                    } ?: "N/A"
-                results["Speed"] = speed
-
-                // 2) RPM (010C)
-                val raw010c = readObdPid("010C")
-                val rpm = raw010c.takeIf { it.startsWith("410C", ignoreCase = true) }?.let {
-                    // “410C A B” → ((A*256)+B)/4
-                    val noSpaces = it.removeSpaces()
-                    // “410C1AF8” → A = “1A”, B = “F8”
-                    if (noSpaces.length >= 8) {
-                        val a = noSpaces.substring(4, 6).toIntOrNull(16) ?: 0
-                        val b = noSpaces.substring(6, 8).toIntOrNull(16) ?: 0
-                        ((a * 256 + b) / 4).toString() + " rpm"
-                    } else "N/A"
+                val speedRaw = pid("010D")
+                results["Speed"] = speedRaw.takeIf { it.startsWith("410D", true) }?.let {
+                    it.replace(" ", "").substring(4, 6).toInt(16).toString() + " km/h"
                 } ?: "N/A"
-                results["RPM"] = rpm
 
-                // 3) Engine coolant temp (0105): raw “4105 XX” → temp = XX – 40
-                val raw0105 = readObdPid("0105")
-                val temp = raw0105.takeIf { it.startsWith("4105", ignoreCase = true) }?.let {
-                    val noSpaces = it.removeSpaces()
-                    if (noSpaces.length >= 6) {
-                        val x = noSpaces.substring(4, 6).toIntOrNull(16) ?: 0
-                        (x - 40).toString() + " °C"
-                    } else "N/A"
+                val rpmRaw = pid("010C")
+                results["RPM"] = rpmRaw.takeIf { it.startsWith("410C", true) }?.let {
+                    val n = it.replace(" ", "")
+                    val a = n.substring(4, 6).toInt(16)
+                    val b = n.substring(6, 8).toInt(16)
+                    ((a * 256 + b) / 4).toString() + " rpm"
                 } ?: "N/A"
-                results["Engine Temp"] = temp
 
-                // 4) Throttle position (0111): raw “4111 XX” → (XX*100)/255 %
-                val raw0111 = readObdPid("0111")
-                val throttle = raw0111.takeIf { it.startsWith("4111", ignoreCase = true) }?.let {
-                    val noSpaces = it.removeSpaces()
-                    if (noSpaces.length >= 6) {
-                        val x = noSpaces.substring(4, 6).toIntOrNull(16) ?: 0
-                        ((x * 100) / 255).toString() + " %"
-                    } else "N/A"
+                val tempRaw = pid("0105")
+                results["Engine Temp"] = tempRaw.takeIf { it.startsWith("4105", true) }?.let {
+                    (it.replace(" ", "").substring(4, 6).toInt(16) - 40).toString() + " °C"
                 } ?: "N/A"
-                results["Throttle"] = throttle
+
+                val throttleRaw = pid("0111")
+                results["Throttle"] = throttleRaw.takeIf { it.startsWith("4111", true) }?.let {
+                    (it.replace(" ", "").substring(4, 6).toInt(16) * 100 / 255).toString() + " %"
+                } ?: "N/A"
 
                 onLiveDataReady(results)
                 localData = results
             }
+
         }
     }
 
@@ -535,14 +638,6 @@ private fun ObdLiveDataDialog(
         }
     )
 }
-
-
-/** Extension to strip all whitespace from a hex string. */
-private fun String.removeSpaces(): String = this.replace("\\s".toRegex(), "")
-
-
-// ————————————————————————————————————————————————
-// “AddCarDialog” and “BottomNavigationBar” are unchanged from before.
 
 @Composable
 fun AddCarDialog(
@@ -581,7 +676,8 @@ fun AddCarDialog(
                         value = y,
                         onValueChange = { y = it },
                         label = { Text("Year") },
-                        singleLine = true
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions.Default.copy(keyboardType = KeyboardType.Number)
                     )
                     OutlinedTextField(
                         value = lp,
@@ -608,8 +704,8 @@ fun AddCarDialog(
 @Composable
 fun BottomNavigationBar(
     onMapClick: () -> Unit,
-    onSwitchClick: () -> Unit,
-    onWalletClick: () -> Unit
+    onGarageClick: () -> Unit,
+    onSettingsClick: () -> Unit
 ) {
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
         Row(
@@ -633,14 +729,14 @@ fun BottomNavigationBar(
                     tint = Color.LightGray
                 )
             }
-            IconButton(onClick = onSwitchClick, modifier = Modifier.size(50.dp)) {
+            IconButton(onClick = onGarageClick, modifier = Modifier.size(50.dp)) {
                 Icon(
                     painter = painterResource(id = R.drawable.garage),
                     contentDescription = "Garage",
                     tint = Color.LightGray
                 )
             }
-            IconButton(onClick = onWalletClick, modifier = Modifier.size(50.dp)) {
+            IconButton(onClick = onSettingsClick, modifier = Modifier.size(50.dp)) {
                 Icon(
                     painter = painterResource(id = R.drawable.settings),
                     contentDescription = "Settings",
@@ -650,3 +746,77 @@ fun BottomNavigationBar(
         }
     }
 }
+
+@Composable
+fun ObdErrorCodesDialog(
+    obdInStream: InputStream?,
+    obdOutStream: OutputStream?,
+    onDismiss: () -> Unit,
+    errorCodes: List<String>,
+    onCodesReady: (List<String>) -> Unit
+) {
+    /** stare locală – ce coduri afișăm în UI  */
+    var localCodes by remember { mutableStateOf(errorCodes) }
+
+    /** citim DTC-urile doar o dată, în IO thread, cu utilitarul sendElmCommand */
+    LaunchedEffect(Unit) {
+        if (localCodes.isEmpty()) {
+            withContext(Dispatchers.IO) {
+                val resp = sendElmCommand("03", obdInStream, obdOutStream, 1500)
+                val codes = mutableListOf<String>()
+
+                if (resp.startsWith("43")) {
+                    val data = resp.drop(2)                      // scoate „43”
+                    for (i in data.indices step 4) {
+                        if (i + 4 <= data.length) {
+                            val raw = data.substring(i, i + 4)
+                            if (raw != "0000") codes.add(parseDtc(raw))
+                        }
+                    }
+                }
+                if (codes.isEmpty()) codes.add("No error codes found.")
+                onCodesReady(codes)      // propagă spre HomePage dacă vrei
+                localCodes = codes       // actualizează UI
+            }
+        }
+    }
+
+    /** UI – dialog propriu-zis */
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Error Codes (DTCs)") },
+        text = {
+            Column {
+                if (localCodes.isEmpty()) {
+                    Text("Reading error codes…", fontSize = 16.sp)
+                    LinearProgressIndicator(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 8.dp)
+                    )
+                } else {
+                    localCodes.forEach { code ->
+                        Text(code, fontSize = 14.sp, modifier = Modifier.padding(vertical = 4.dp))
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } }
+    )
+}
+
+private fun parseDtc(hex: String): String {
+    if (hex.length < 4) return "Invalid Code"
+    val firstByte = hex.substring(0, 2).toInt(16)
+    val secondByte = hex.substring(2, 4)
+    val type = when (firstByte shr 6) {
+        0 -> "P"
+        1 -> "C"
+        2 -> "B"
+        3 -> "U"
+        else -> "?"
+    }
+    val code = ((firstByte and 0x3F).toString(16).padStart(2, '0') + secondByte).uppercase()
+    return "$type$code"
+}
+

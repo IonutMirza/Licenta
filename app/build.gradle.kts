@@ -67,6 +67,10 @@ dependencies {
     // Compose + Activity
     implementation("androidx.activity:activity-compose:1.9.0")
 
+    // poza de profil settings page
+    implementation("io.coil-kt:coil-compose:2.4.0") // pentru imagine din URI
+    implementation("androidx.datastore:datastore-preferences:1.0.0")
+
     // Compose UI
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
