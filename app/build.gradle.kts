@@ -82,6 +82,11 @@ dependencies {
     implementation(libs.androidx.material3)
     implementation(libs.androidx.appcompat)
 
+    implementation("androidx.work:work-runtime-ktx:2.9.0")
+    implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.7.0")
+
+
+
     // Testing
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)

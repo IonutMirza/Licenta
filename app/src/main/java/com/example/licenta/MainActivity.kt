@@ -1,6 +1,8 @@
 package com.example.licenta
 
-import android.content.Intent
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
@@ -9,15 +11,17 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.*
 import androidx.compose.ui.platform.LocalContext
+import androidx.core.app.ActivityCompat
+import androidx.core.content.ContextCompat
 import com.example.licenta.model.Car
 import com.example.licenta.ui.theme.LicentaTheme
 import com.google.android.gms.auth.api.signin.GoogleSignIn
 import com.google.android.gms.auth.api.signin.GoogleSignInClient
 import com.google.android.gms.auth.api.signin.GoogleSignInOptions
 import com.google.android.gms.common.api.ApiException
+import com.google.firebase.Firebase
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.GoogleAuthProvider
-import com.google.firebase.Firebase
 import com.google.firebase.initialize
 import com.google.android.libraries.places.api.Places
 
@@ -28,29 +32,50 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // — Initialize Firebase & Google Places
+        // 1️⃣  Initialize Firebase & Google Places -------------------------------------------------
         Firebase.initialize(this)
         auth = FirebaseAuth.getInstance()
-
         if (!Places.isInitialized()) {
             Places.initialize(applicationContext, getString(R.string.google_api_key))
         }
 
-        // — Google Sign-In setup
+        // 2️⃣  Google Sign‑In configuration ------------------------------------------------------
         val gso = GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
             .requestIdToken(getString(R.string.default_web_client_id))
             .requestEmail()
             .build()
         googleSignInClient = GoogleSignIn.getClient(this, gso)
 
-        // — Jetpack Compose UI
+        // 3️⃣  Compose UI ------------------------------------------------------------------------
         setContent {
             LicentaTheme {
                 val context = LocalContext.current
                 var currentScreen by remember { mutableStateOf(if (auth.currentUser != null) "home" else "signUp") }
                 var selectedCar by remember { mutableStateOf<Car?>(null) }
 
-                // — Google Sign-In Launcher
+                /* -------------------------------------------------------------
+                 *  Permission request for POST_NOTIFICATIONS (Android 13+)
+                 * ------------------------------------------------------------*/
+                LaunchedEffect(Unit) {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                        val granted = ContextCompat.checkSelfPermission(
+                            context,
+                            Manifest.permission.POST_NOTIFICATIONS
+                        ) == PackageManager.PERMISSION_GRANTED
+
+                        if (!granted) {
+                            ActivityCompat.requestPermissions(
+                                this@MainActivity,
+                                arrayOf(Manifest.permission.POST_NOTIFICATIONS),
+                                1001
+                            )
+                        }
+                    }
+                }
+
+                /* -------------------------------------------------------------
+                 *  Google Sign‑In Launcher
+                 * ------------------------------------------------------------*/
                 val launcher = rememberLauncherForActivityResult(
                     contract = ActivityResultContracts.StartActivityForResult()
                 ) { result ->
@@ -63,70 +88,58 @@ class MainActivity : ComponentActivity() {
                                 if (authResult.isSuccessful) {
                                     currentScreen = "home"
                                 } else {
-                                    Toast.makeText(context, "Google sign-in failed", Toast.LENGTH_SHORT).show()
+                                    Toast.makeText(context, "Google sign‑in failed", Toast.LENGTH_SHORT).show()
                                 }
                             }
                     } catch (e: ApiException) {
-                        Toast.makeText(context, "Google sign-in error: ${e.message}", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(context, "Google sign‑in error: ${e.message}", Toast.LENGTH_SHORT).show()
                     }
                 }
 
-                // — Navigation Between Screens
+                /* -------------------------------------------------------------
+                 *  App Navigation (very light state machine)
+                 * ------------------------------------------------------------*/
                 when (currentScreen) {
-                    "signUp" -> {
-                        SignUpPage(
-                            onNavigateToHomePage = { currentScreen = "home" },
-                            onGoogleSignInClick = {
-                                val signInIntent = googleSignInClient.signInIntent
-                                launcher.launch(signInIntent)
-                            }
-                        )
-                    }
+                    "signUp" -> SignUpPage(
+                        onNavigateToHomePage = { currentScreen = "home" },
+                        onGoogleSignInClick = {
+                            val signInIntent = googleSignInClient.signInIntent
+                            launcher.launch(signInIntent)
+                        }
+                    )
 
-                    "home" -> {
-                        HomePage(
-                            onLogout = {
-                                auth.signOut()
-                                googleSignInClient.signOut()
-                                currentScreen = "signUp"
-                            },
-                            onNavigateToMapPage = { currentScreen = "map" },
-                            onNavigateToGaragePage = { currentScreen = "garage" },
-                            onNavigateToSettingsPage = { currentScreen = "settings" },
-                            selectedCar = selectedCar,
-                            onCarSelected = { car -> selectedCar = car }
-                        )
-                    }
+                    "home" -> HomePage(
+                        onLogout = {
+                            auth.signOut(); googleSignInClient.signOut(); currentScreen = "signUp"
+                        },
+                        onNavigateToMapPage = { currentScreen = "map" },
+                        onNavigateToGaragePage = { currentScreen = "garage" },
+                        onNavigateToSettingsPage = { currentScreen = "settings" },
+                        selectedCar = selectedCar,
+                        onCarSelected = { car -> selectedCar = car }
+                    )
 
-                    "map" -> {
-                        MapPage(
-                            onNavigateToGaragePage = { currentScreen = "garage" },
-                            onNavigateBack = { currentScreen = "home" },
-                            onNavigateToSettingsPage = { currentScreen = "settings" }
-                        )
-                    }
+                    "map" -> MapPage(
+                        onNavigateToGaragePage = { currentScreen = "garage" },
+                        onNavigateBack = { currentScreen = "home" },
+                        onNavigateToSettingsPage = { currentScreen = "settings" }
+                    )
 
-                    "garage" -> {
-                        GaragePage(
-                            onNavigateToMapPage = { currentScreen = "map" },
-                            onNavigateBack = { currentScreen = "home" },
-                            onNavigateToSettingsPage = { currentScreen = "settings" },
-                            onCarSelected = { car -> selectedCar = car }
-                        )
-                    }
+                    "garage" -> GaragePage(
+                        onNavigateToMapPage = { currentScreen = "map" },
+                        onNavigateBack = { currentScreen = "home" },
+                        onNavigateToSettingsPage = { currentScreen = "settings" },
+                        onCarSelected = { car -> selectedCar = car }
+                    )
 
-                    "settings" -> {
-                        SettingsPage(
-                            onNavigateToMapPage = { currentScreen = "map" },
-                            onNavigateToGaragePage = { currentScreen = "garage" },
-                            onNavigateBack = { currentScreen = "home" },
-                            onLogoutNavigateToSignUp = {
-                                auth.signOut()
-                                googleSignInClient.signOut()
-                                currentScreen = "signUp"
-                            }
-                        )
-                    }
+                    "settings" -> SettingsPage(
+                        onNavigateToMapPage = { currentScreen = "map" },
+                        onNavigateToGaragePage = { currentScreen = "garage" },
+                        onNavigateBack = { currentScreen = "home" },
+                        onLogoutNavigateToSignUp = {
+                            auth.signOut(); googleSignInClient.signOut(); currentScreen = "signUp"
+                        }
+                    )
                 }
             }
         }

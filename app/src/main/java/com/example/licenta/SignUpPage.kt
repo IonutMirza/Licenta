@@ -16,8 +16,12 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.example.licenta.ui.theme.LicentaTheme
+import com.google.firebase.Firebase
 import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.firestore.SetOptions
+import com.google.firebase.firestore.firestore
+
+
 
 @Composable
 fun SignUpPage(
@@ -62,9 +66,18 @@ fun SignUpPage(
                     auth.createUserWithEmailAndPassword(email, password)
                         .addOnCompleteListener { task ->
                             if (task.isSuccessful) {
+                                val uid = auth.currentUser?.uid ?: return@addOnCompleteListener
+                                val emailSaved = auth.currentUser?.email ?: ""
+
+                                val db = Firebase.firestore
+
+                                db.collection("users")
+                                    .document(uid)
+                                    .set(mapOf("email" to emailSaved), SetOptions.merge())
                                 Toast.makeText(context, "Account Created!", Toast.LENGTH_SHORT).show()
                                 onNavigateToHomePage()
-                            } else {
+
+                        } else {
                                 Toast.makeText(context, "Error: ${task.exception?.message}", Toast.LENGTH_SHORT).show()
                             }
                         }
@@ -72,8 +85,16 @@ fun SignUpPage(
                     auth.signInWithEmailAndPassword(email, password)
                         .addOnCompleteListener { task ->
                             if (task.isSuccessful) {
-                                Toast.makeText(context, "Welcome back!", Toast.LENGTH_SHORT).show()
-                                onNavigateToHomePage()
+                                    val uid = auth.currentUser?.uid ?: return@addOnCompleteListener
+                                    val emailSaved = auth.currentUser?.email ?: ""
+
+                                    val db = Firebase.firestore
+                                    db.collection("user-stats")
+                                        .document(uid)
+                                        .set(mapOf("tripCount" to 0L, "totalScore" to 0.0))
+
+                                    Toast.makeText(context, "Welcome back!", Toast.LENGTH_SHORT).show()
+                                    onNavigateToHomePage()
                             } else {
                                 Toast.makeText(context, "Login failed: ${task.exception?.message}", Toast.LENGTH_SHORT).show()
                             }

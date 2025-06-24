@@ -15,7 +15,6 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.*
@@ -41,13 +40,97 @@ import com.google.android.libraries.places.api.model.AutocompletePrediction
 import com.google.android.libraries.places.api.model.Place
 import com.google.android.libraries.places.api.net.FetchPlaceRequest
 import com.google.android.libraries.places.api.net.FindAutocompletePredictionsRequest
-
-// ===== Adaugă aceste importuri suplimentare =====
 import com.google.firebase.firestore.Query
 import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.ktx.firestore
 import com.google.firebase.auth.ktx.auth
 import com.google.firebase.ktx.Firebase
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import androidx.core.app.NotificationCompat
+import androidx.core.app.NotificationManagerCompat
+import android.os.Build
+import androidx.compose.foundation.background
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.layout.Column
+import androidx.compose.material3.TextButton
+
+
+fun updateUserTripStats(tripScore: Float) {
+    val uid = Firebase.auth.currentUser?.uid ?: return
+    val userStatsRef = Firebase.firestore.collection("user-stats").document(uid)
+
+    userStatsRef.get()
+        .addOnSuccessListener { doc ->
+            if (doc != null && doc.exists()) {
+                userStatsRef.update(
+                    mapOf(
+                        "tripCount" to FieldValue.increment(1),
+                        "totalScore" to FieldValue.increment(tripScore.toDouble())
+                    )
+                )
+            } else {
+                val newStats = mapOf(
+                    "tripCount" to 1,
+                    "totalScore" to tripScore
+                )
+                userStatsRef.set(newStats)
+            }
+        }
+}
+
+private fun sendTripNotification(ctx: Context, trip: TripRecord) {
+    // ⬇️  adaugă IMEDIAT după începutul funcţiei
+    val prefs = ctx.getSharedPreferences("settings", Context.MODE_PRIVATE)
+    if (!prefs.getBoolean("notifications_enabled", true)) return
+    val chanId = "trip_channel"
+    val nm = NotificationManagerCompat.from(ctx)
+
+    // Creează canalul (prima dată)
+    if (Build.VERSION.SDK_INT >= 26 &&
+        nm.getNotificationChannel(chanId) == null) {
+        nm.createNotificationChannel(
+            NotificationChannel(
+                chanId,
+                "Trip finished",
+                NotificationManager.IMPORTANCE_DEFAULT
+            )
+        )
+    }
+
+    // Dacă pe Android 13+ nu avem permisiune → ieșim
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+        ContextCompat.checkSelfPermission(ctx, Manifest.permission.POST_NOTIFICATIONS)
+        != PackageManager.PERMISSION_GRANTED) {
+        // poți lansa request în UI, de ex. notifPermLauncher.launch(...)
+        return
+    }
+
+    val msg = buildString {
+        append("Ai finalizat o călătorie de ")
+        append(String.format("%.1f km în %d min", trip.distanceMeters/1000f,
+            (trip.endTimeMs-trip.startTimeMs)/60000 ))
+        append("\nScor: ${trip.score}/5  |  Viteză medie: ")
+        append(String.format("%.1f", trip.avgSpeedKmh))
+        append(" km/h")
+    }
+
+    val notif = NotificationCompat.Builder(ctx, chanId)
+        .setSmallIcon(R.drawable.car_trip)     // pune orice icon ai deja
+        .setContentTitle("Călătorie salvată")
+        .setContentText(msg)
+        .setStyle(NotificationCompat.BigTextStyle().bigText(msg))
+        .setAutoCancel(true)
+        .build()
+
+    nm.notify(trip.id.hashCode(), notif)
+}
+
+
 
 data class TripPoint(val lat: Double, val lng: Double)
 
@@ -121,11 +204,16 @@ data class TripRecord(
     fun formattedDescription(): String {
         val distKm = String.format("%.1f", distanceMeters / 1000f)
         val durMin = (endTimeMs - startTimeMs) / 60000
-        val avg = String.format("%.1f", avgSpeedKmh)
-        val max = String.format("%.0f", maxSpeedKmh)
-        val stars = "★".repeat(score.toInt()) + "☆".repeat(5 - score.toInt())
-        return "· $distKm km • $durMin min\n  avg $avg km/h • max $max km/h\n  🚀 x$hardAccelerations  🛑 x$hardBrakes\n  Rating: $score/5.0 $stars"
+        val avg    = String.format("%.1f", avgSpeedKmh)
+        val max    = String.format("%.0f", maxSpeedKmh)
+        return buildString {
+            append("· $distKm km • $durMin min\n")
+            append("  avg $avg km/h • max $max km/h\n")
+            append("  🚀 x$hardAccelerations  🛑 x$hardBrakes\n")
+            append("  Rating: $score/5 ⭐")
+        }
     }
+
 }
 
 
@@ -230,6 +318,11 @@ fun MapPage(
     onNavigateToGaragePage: () -> Unit,
     onNavigateToSettingsPage: () -> Unit
 ) {
+
+    val notifPermLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) {  }
+
     val context = LocalContext.current
 
 
@@ -284,6 +377,10 @@ fun MapPage(
     val selectedTripPath = remember { mutableStateListOf<LatLng>() }
     var selectedTripId by remember { mutableStateOf<Long?>(null) }
 
+    val tripPathCache = remember { mutableStateMapOf<Long, List<LatLng>>() }
+    val tripsDialogMaxHeight = 380.dp
+    var showFullMapDialog by remember { mutableStateOf(false) }
+
 
     // Încarcă ultimele 10 tripuri la lansare:
     LaunchedEffect(Unit) {
@@ -316,11 +413,23 @@ fun MapPage(
             predictions = emptyList()
         }
     }
+    val prefs = context.getSharedPreferences("settings", Context.MODE_PRIVATE)
+    val darkModeEnabled = remember { mutableStateOf(prefs.getBoolean("dark_mode", false)) }
+    val isDark = darkModeEnabled.value
+
+    val backgroundColor = if (isDark) Color(0xFF1E1E1E) else Color.White
+    val textColor = if (isDark) Color.White else Color.Black
 
     // ==== Cerem permisiunea și pornim GPS-ul ====
     RequestLocationPermission {
+        val prefs = context.getSharedPreferences("settings", Context.MODE_PRIVATE)
+        if (!prefs.getBoolean("location_tracking_enabled", true)) {
+            Toast.makeText(context, "Tracking-ul locației este dezactivat", Toast.LENGTH_SHORT).show()
+            return@RequestLocationPermission
+        }
+
         startLocationUpdates(context) { lat, lng, speedKmh, timestamp ->
-            val newLatLng = LatLng(lat, lng)
+        val newLatLng = LatLng(lat, lng)
             if (tripStartTimestamp != null) {
                 tripPath.add(newLatLng)
             }
@@ -376,13 +485,16 @@ fun MapPage(
     }
 
 
-
-    /* ─────────────── UI-ul principal ────────────── */
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(16.dp)
+    Surface(
+        modifier = Modifier.fillMaxSize(),
+        color = backgroundColor
     ) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(16.dp)
+                .background(backgroundColor)
+        ){
         // — 1️⃣ Search bar + sugestii
         Column {
             OutlinedTextField(
@@ -391,7 +503,7 @@ fun MapPage(
                     query = it
                     isFavoriteSelected = false
                 },
-                label = { Text("Search location") },
+                label = { Text("Search location", color= textColor) },
                 modifier = Modifier.fillMaxWidth()
             )
             predictions.forEach { prediction ->
@@ -429,10 +541,12 @@ fun MapPage(
                 .fillMaxWidth()
                 .weight(1f)
         ) {
+            val locationTrackingEnabled = remember { mutableStateOf(prefs.getBoolean("location_tracking_enabled", true)) }
+
             GoogleMap(
                 modifier = Modifier.matchParentSize(),
                 cameraPositionState = cameraPositionState,
-                properties = MapProperties(isMyLocationEnabled = true),
+                properties = MapProperties(isMyLocationEnabled = locationTrackingEnabled.value),
                 uiSettings = MapUiSettings(zoomControlsEnabled = true),
                 onMapClick = { latLng ->
                     selectedLocation = latLng
@@ -556,9 +670,15 @@ fun MapPage(
                 onClick = { showNameDialog = true },
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(vertical = 8.dp)
-            ) {
+                    .padding(vertical = 8.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = MaterialTheme.colorScheme.primary,
+                    contentColor = textColor
+                )
+            )
+            {
                 Text("Add to Favorites")
+
             }
         }
 
@@ -566,18 +686,21 @@ fun MapPage(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(vertical = 8.dp),
+                .padding(vertical = 8.dp)
+                .background(backgroundColor),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
                     text = "$statusEmoji  $status",
-                    style = MaterialTheme.typography.bodyLarge
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = textColor
                 )
                 Spacer(modifier = Modifier.width(16.dp))
                 Text(
                     text = String.format("%.0f km/h", currentSpeedKmh),
-                    style = MaterialTheme.typography.bodyLarge
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = textColor
                 )
             }
 
@@ -604,6 +727,9 @@ fun MapPage(
                             )
                             saveTripToFirestoreTopLevel(trip)
                             saveTripPathToFirestore(trip.id, tripPath.toList())
+                            sendTripNotification(context, trip)
+                            //refreshUserStatsFromTrips(userId)
+                            updateUserTripStats(score) // 🟡 Actualizăm scorul total și trip count
                             Toast.makeText(context, "Trip saved manually", Toast.LENGTH_SHORT).show()
                         } else {
                             Toast.makeText(context, "Trip too short to save", Toast.LENGTH_SHORT).show()
@@ -620,7 +746,7 @@ fun MapPage(
                         .fillMaxWidth()
                         .padding(top = 12.dp)
                 ) {
-                    Text("Save Trip")
+                    Text("Save Trip", color = textColor)
                 }
             }
 
@@ -660,13 +786,15 @@ fun MapPage(
                 )
             }
         }
+            }
     }
 
     // ─────────────── Dialog: “Nume Favorite” ───────────────
     if (showNameDialog) {
         AlertDialog(
             onDismissRequest = { showNameDialog = false },
-            title = { Text("Enter Favorite Name") },
+            containerColor = backgroundColor,
+            title = { Text("Enter Favorite Name", color=textColor) },
             text = {
                 OutlinedTextField(
                     value = favoriteName,
@@ -737,6 +865,7 @@ fun MapPage(
     if (showNavigateDialog && selectedLocation != null) {
         AlertDialog(
             onDismissRequest = { showNavigateDialog = false },
+            containerColor = backgroundColor,
             confirmButton = {
                 TextButton(onClick = {
                     val lat = selectedLocation!!.latitude
@@ -759,7 +888,7 @@ fun MapPage(
                     }
                     showNavigateDialog = false
                 }) {
-                    Text(text = "Navigate în Google Maps")
+                    Text(text = "Navigate în Google Maps", color = textColor)
                 }
             },
             dismissButton = {
@@ -767,60 +896,246 @@ fun MapPage(
                     Text("Cancel")
                 }
             },
-            title = { Text("Navigare către destinație") },
+            title = { Text("Navigare către destinație", color=textColor) },
             text = { Text("Se deschide Google Maps pentru direcții către destinație.") }
         )
     }
-
-    // ─────────────── Dialog: “My Last 10 Trips” ───────────────
-    if (showTripsDialog) {
-        AlertDialog(
-            onDismissRequest = { showTripsDialog = false },
-            confirmButton = {
-                TextButton(onClick = { showTripsDialog = false }) {
-                    Text("Close")
-                }
-            },
-            title = { Text("My Last 10 Trips") },
-            text = {
-                if (tripsList.isEmpty()) {
-                    Text(text = "No trips yet.")
-                } else {
-                    LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                        items(tripsList.toList(), key = { it.id }) { trip ->
-                            Column(modifier = Modifier
+        /* ─────────────────────────  DIALOG „My Last 10 Trips”  ───────────────────────── */
+        if (showTripsDialog) {
+            AlertDialog(
+                onDismissRequest = { showTripsDialog = false },
+                containerColor   = backgroundColor,
+                confirmButton = {
+                    TextButton(onClick = { showTripsDialog = false }) { Text("Close") }
+                },
+                title = { Text("My Last 10 Trips", color = textColor) },
+                text  = {
+                    if (tripsList.isEmpty()) {
+                        Text("No trips yet.", color = textColor)
+                    } else {
+                        /* listă scroll-abilă */
+                        LazyColumn(
+                            state  = rememberLazyListState(),
+                            modifier = Modifier
                                 .fillMaxWidth()
-                                .clickable {
-                                    selectedTripId = trip.id
-                                    loadTripPath(trip.id) { path ->
-                                        selectedTripPath.clear()
-                                        selectedTripPath.addAll(path)
+                                .heightIn(max = tripsDialogMaxHeight),
+                            verticalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
 
-                                        if (path.isNotEmpty()) {
-                                            val boundsBuilder = LatLngBounds.builder()
-                                            path.forEach { boundsBuilder.include(it) }
-                                            val bounds = boundsBuilder.build()
-                                            cameraPositionState.move(
-                                                CameraUpdateFactory.newLatLngBounds(bounds, 100)
-                                            )
+                            itemsIndexed(tripsList, key = { _, t -> t.id }) { index, trip ->
+
+                                /* 0️⃣ ─ dacă path-ul nu este deja în cache îl încărcăm o dată */
+                                val miniMapPath = tripPathCache[trip.id] ?: emptyList()
+                                LaunchedEffect(miniMapPath.isEmpty()) {
+                                    if (miniMapPath.isEmpty()) {
+                                        loadTripPath(trip.id) { path ->
+                                            tripPathCache[trip.id] = path
                                         }
                                     }
-                                }) {
-                                Text(text = trip.formattedDescription())
+                                }
+
+                                /* 1️⃣ ─ Card colorat alternativ */
+                                Card(
+                                    colors = CardDefaults.cardColors(
+                                        containerColor = if (index % 2 == 0)
+                                            Color(0xFFBBDEFB)            // bleu
+                                        else
+                                            Color(0xFFC8E6C9)            // verde deschis
+                                    ),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(8.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+
+                                        /* ——— TEXT ——— */
+                                        Column(Modifier.weight(1f)) {
+                                            Text(
+                                                "Trip ${index + 1}",
+                                                fontWeight = FontWeight.Bold,
+                                                color      = Color.Black
+                                            )
+                                            Spacer(Modifier.height(4.dp))
+                                            Text(
+                                                trip.formattedDescription(),
+                                                fontSize = 12.sp,
+                                                color    = Color.DarkGray
+                                            )
+                                        }
+
+                                        Spacer(Modifier.width(6.dp))
+
+                                        val miniCam = rememberCameraPositionState()
+
+                                        Column(
+                                            horizontalAlignment = Alignment.CenterHorizontally,
+                                            modifier = Modifier.width(90.dp)           // lățime fixă
+                                        ) {
+                                            // ─ Mini-harta propriu-zisă
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(90.dp)
+                                                    .clip(MaterialTheme.shapes.small)
+                                            ) {
+                                                GoogleMap(
+                                                    modifier            = Modifier.matchParentSize(),
+                                                    cameraPositionState = miniCam,
+                                                    uiSettings = MapUiSettings(
+                                                        zoomControlsEnabled   = false,
+                                                        scrollGesturesEnabled = false,
+                                                        tiltGesturesEnabled   = false,
+                                                        zoomGesturesEnabled   = false
+                                                    ),
+                                                    properties = MapProperties(mapType = MapType.NORMAL)
+                                                ) {
+                                                    if (miniMapPath.isNotEmpty()) {
+                                                        Polyline(
+                                                            points = miniMapPath,
+                                                            color  = Color.Red,
+                                                            width  = 4f
+                                                        )
+
+                                                        // START 🟢
+                                                        Marker(
+                                                            state = MarkerState(miniMapPath.first()),
+                                                            title = "Start",
+                                                            icon  = BitmapDescriptorFactory.defaultMarker(
+                                                                BitmapDescriptorFactory.HUE_GREEN
+                                                            )
+                                                        )
+                                                        // END 🔴
+                                                        Marker(
+                                                            state = MarkerState(miniMapPath.last()),
+                                                            title = "End",
+                                                            icon  = BitmapDescriptorFactory.defaultMarker(
+                                                                BitmapDescriptorFactory.HUE_RED
+                                                            )
+                                                        )
+
+                                                        // centrează camera
+                                                        LaunchedEffect(Unit) {
+                                                            val b = LatLngBounds.builder().apply {
+                                                                miniMapPath.forEach { include(it) }
+                                                            }.build()
+                                                            miniCam.move(CameraUpdateFactory.newLatLngBounds(b, 20))
+                                                        }
+                                                    }
+                                                }
+                                            }
+
+                                            // ─ Butonul „Full Map” (TextButton mic)
+                                            TextButton(
+                                                onClick = {
+                                                    selectedTripPath.clear()            // curățăm selecția anterioară
+                                                    val cached = tripPathCache[trip.id]
+                                                    if (!cached.isNullOrEmpty()) {
+                                                        selectedTripPath.addAll(cached)
+                                                        showFullMapDialog = true
+                                                    } else {
+                                                        loadTripPath(trip.id) { path ->
+                                                            tripPathCache[trip.id] = path
+                                                            selectedTripPath.clear()
+                                                            selectedTripPath.addAll(path)
+                                                            showFullMapDialog = true
+                                                        }
+                                                    }
+                                                },
+                                                contentPadding = PaddingValues(0.dp),   // text mic, fără margini
+                                                modifier       = Modifier.fillMaxWidth()
+                                            ) {
+                                                Text("Full Map", fontSize = 12.sp, color = Color.Black)
+                                            }
+                                        }
+
+                                    }
+                                }
                             }
                         }
                     }
-
                 }
-            }
-        )
-    }
+            )
+        }
 
-    // ─────────── Dialog: “View Favorites” ───────────
+        if (showFullMapDialog) {
+            val scrH = LocalContext.current.resources.displayMetrics.heightPixels.dp
+
+            AlertDialog(
+                onDismissRequest = { showFullMapDialog = false },
+                confirmButton = {
+                    TextButton(onClick = { showFullMapDialog = false }) {
+                        Text("Close")
+                    }
+                },
+                title = { Text("Full Trip View") },
+                text = {
+                    if (selectedTripPath.isEmpty()) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(260.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            CircularProgressIndicator()
+                        }
+                    } else {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()  // full screen map
+                        ) {
+                            val bigCam = rememberCameraPositionState()
+                            GoogleMap(
+                                modifier = Modifier.matchParentSize(),
+                                cameraPositionState = bigCam,
+                                uiSettings = MapUiSettings(zoomControlsEnabled = true)
+                            ) {
+                                Polyline(
+                                    points = selectedTripPath,
+                                    color = Color.Blue,
+                                    width = 6f
+                                )
+
+                                // Marker START 🟢
+                                Marker(
+                                    state = MarkerState(selectedTripPath.first()),
+                                    title = "Start",
+                                    icon = BitmapDescriptorFactory.defaultMarker(
+                                        BitmapDescriptorFactory.HUE_GREEN
+                                    )
+                                )
+                                // Marker END 🔴
+                                Marker(
+                                    state = MarkerState(selectedTripPath.last()),
+                                    title = "End",
+                                    icon = BitmapDescriptorFactory.defaultMarker(
+                                        BitmapDescriptorFactory.HUE_RED
+                                    )
+                                )
+
+                                LaunchedEffect(Unit) {
+                                    val bounds = LatLngBounds.builder().apply {
+                                        selectedTripPath.forEach { include(it) }
+                                    }.build()
+                                    bigCam.move(
+                                        CameraUpdateFactory.newLatLngBounds(bounds, 40)
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            )
+        }
+
+        // ─────────── Dialog: “View Favorites” ───────────
     if (showFavoritesDialog) {
         AlertDialog(
             onDismissRequest = { showFavoritesDialog = false },
-            title = { Text("Your Favorites") },
+            containerColor = backgroundColor,
+            title = { Text("Your Favorites", color=textColor) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     if (favoritesList.isEmpty()) {
@@ -875,8 +1190,9 @@ fun MapPage(
     if (showDeleteConfirmDialog && favoriteToDelete != null) {
         AlertDialog(
             onDismissRequest = { showDeleteConfirmDialog = false },
-            title = { Text("Remove Favorite") },
+            title = { Text("Remove Favorite", color=textColor) },
             text = { Text("Do you want to remove \"${favoriteToDelete!!.name}\"?") },
+            containerColor = backgroundColor,
             confirmButton = {
                 TextButton(onClick = {
                     Firebase.firestore

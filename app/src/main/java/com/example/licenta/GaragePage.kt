@@ -1,8 +1,16 @@
 package com.example.licenta
 
+import android.Manifest
 import android.app.DatePickerDialog
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.TimePickerDialog
 import android.content.Context
+import android.content.pm.PackageManager
+import android.os.Build
+import android.util.Log
 import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -17,12 +25,111 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.work.Constraints
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.app.NotificationCompat
+import androidx.core.app.NotificationManagerCompat
+import androidx.core.content.ContextCompat
+import androidx.work.CoroutineWorker
+import androidx.work.ExistingPeriodicWorkPolicy
+import androidx.work.NetworkType
+import androidx.work.PeriodicWorkRequestBuilder
+import androidx.work.WorkManager
+import androidx.work.WorkerParameters
 import com.example.licenta.model.Car
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FirebaseFirestore
+import kotlinx.coroutines.tasks.await
+import java.text.SimpleDateFormat
 import java.util.*
+import java.util.concurrent.TimeUnit
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.work.OneTimeWorkRequestBuilder
+
+// ExpiryCheckWorker.kt
+class ExpiryCheckWorker(
+    ctx: Context,
+    params: WorkerParameters
+) : CoroutineWorker(ctx, params) {
+
+    private val firestore = FirebaseFirestore.getInstance()
+    private val prefs = ctx.getSharedPreferences("settings", Context.MODE_PRIVATE)
+    private val userId = FirebaseAuth.getInstance().currentUser?.uid
+
+    override suspend fun doWork(): Result {
+        if (userId == null) return Result.success()
+
+        val now = Calendar.getInstance()
+        val sdf = SimpleDateFormat("dd.MM.yyyy", Locale.US)
+
+        val snapshot = firestore.collection("cars1")
+            .whereEqualTo("userId", userId).get().await()
+
+        snapshot.documents.forEach { doc ->
+            val car = doc.toObject(Car::class.java) ?: return@forEach
+
+            fun check(label: String, dateStr: String?, tag: String) {
+                if (dateStr.isNullOrBlank()) return
+                val date = sdf.parse(dateStr) ?: return
+                val diff = (date.time - now.timeInMillis) / (1000 * 60 * 60 * 24)
+
+                if (diff in 0..6) {
+                    val notifId = (doc.id + tag).hashCode()
+
+                    sendNotification(
+                        "${car.brand} ${car.model}: $label expiră în $diff zile",
+                        notifId
+                    )
+                }
+            }
+
+
+            check("Rovinieta",       car.rovinietaDate, "ROV")
+            check("Asigurarea RCA",  car.insuranceDate, "RCA")
+            check("ITP-ul",          car.itpDate,       "ITP")
+        }
+
+        return Result.success()
+    }
+
+    private fun sendNotification(text: String, id: Int) {
+        val nm = NotificationManagerCompat.from(applicationContext)
+        if (!nm.areNotificationsEnabled()) return
+
+        val chanId = "expiry_channel"
+        if (Build.VERSION.SDK_INT >= 26 &&
+            nm.getNotificationChannel(chanId) == null
+        ) {
+            nm.createNotificationChannel(
+                NotificationChannel(chanId, "Expirări documente",
+                    NotificationManager.IMPORTANCE_DEFAULT)
+            )
+        }
+
+        val notif = NotificationCompat.Builder(applicationContext, chanId)
+            .setSmallIcon(R.drawable.expire)
+            .setContentTitle("Atenție!!!")
+            .setContentText(text)
+            .setAutoCancel(true)
+            .build()
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            if (ContextCompat.checkSelfPermission(applicationContext, Manifest.permission.POST_NOTIFICATIONS)
+                == PackageManager.PERMISSION_GRANTED) {
+                nm.notify(id, notif)
+            } else {
+                // Aici poți ignora notificarea sau cere permisiunea în UI
+                // (doar Activitățile pot cere permisiuni, nu WorkManager!)
+                Log.w("Notif", "Permisiunea POST_NOTIFICATIONS nu e acordată.")
+            }
+        } else {
+            nm.notify(id, notif)
+        }
+
+    }
+}
+
 
 @Composable
 fun GaragePage(
@@ -32,6 +139,13 @@ fun GaragePage(
     onCarSelected: (Car) -> Unit
 ) {
     val context = LocalContext.current
+    val notifPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (!granted) {
+            Toast.makeText(context, "Notificările sunt dezactivate!", Toast.LENGTH_SHORT).show()
+        }
+    }
     val prefs = context.getSharedPreferences("settings", Context.MODE_PRIVATE)
     val darkModeEnabled = remember { mutableStateOf(prefs.getBoolean("dark_mode", false)) }
     val isDark = darkModeEnabled.value
@@ -56,6 +170,53 @@ fun GaragePage(
     var insuranceDate by remember { mutableStateOf("") }
     var itpDate by remember { mutableStateOf("") }
     var notes by remember { mutableStateOf("") }
+
+    // variabilă state
+    var reminderTime by remember {
+        mutableStateOf(prefs.getString("reminder_time", "09:00")!!)
+    }
+
+    fun scheduleExpiryWorker(ctx: Context) {
+        val prefs = ctx.getSharedPreferences("settings", Context.MODE_PRIVATE)
+        val time    = prefs.getString("reminder_time", "09:00") ?: "09:00"
+        val (h, m)  = time.split(":").map { it.toInt() }
+
+        // calculăm offsetul până la următoarea execuție
+        val calNow  = Calendar.getInstance()
+        val calNext = Calendar.getInstance().apply {
+            set(Calendar.HOUR_OF_DAY, h)
+            set(Calendar.MINUTE, m)
+            set(Calendar.SECOND, 0)
+            if (before(calNow)) {
+                // ora selectată a trecut – pornim worker-ul imediat,
+                // apoi îl programăm pentru ziua următoare la aceeași oră
+                WorkManager.getInstance(ctx).enqueue(
+                    OneTimeWorkRequestBuilder<ExpiryCheckWorker>()
+                        .setInitialDelay(1, TimeUnit.MINUTES)  // rulează peste ~1 minut
+                        .build()
+                )
+                add(Calendar.DAY_OF_YEAR, 1)
+            }
+
+        }
+        val initialDelay = calNext.timeInMillis - calNow.timeInMillis
+
+        val work = PeriodicWorkRequestBuilder<ExpiryCheckWorker>(1, TimeUnit.DAYS)
+            .setInitialDelay(initialDelay, TimeUnit.MILLISECONDS)
+            .setConstraints(
+                Constraints.Builder()
+                    .setRequiredNetworkType(NetworkType.CONNECTED)  // citește Firestore
+                    .build()
+            )
+            .build()
+
+        WorkManager.getInstance(ctx).enqueueUniquePeriodicWork(
+            "expiries_check",
+            ExistingPeriodicWorkPolicy.UPDATE,
+            work
+        )
+    }
+
 
     fun openDatePicker(initial: String, onDateSelected: (String) -> Unit) {
         val calendar = Calendar.getInstance()
@@ -109,6 +270,34 @@ fun GaragePage(
         selectedCar?.let {
             Text("Selected Car: ${it.brand} ${it.model}", fontSize = 18.sp, color = textColor)
         }
+
+        Spacer(modifier = Modifier.height(24.dp))
+
+        Button(onClick = {
+            // Android 13+ → cerem permisiunea dacă nu există
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS)
+                != PackageManager.PERMISSION_GRANTED) {
+                notifPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                return@Button
+            }
+
+            TimePickerDialog(
+                context,
+                { _, h, m ->
+                    reminderTime = "%02d:%02d".format(h, m)
+                    prefs.edit().putString("reminder_time", reminderTime).apply()
+                    scheduleExpiryWorker(context)            // pornește / actualizează job-ul
+                    Toast.makeText(context, "Reminder set la $reminderTime", Toast.LENGTH_SHORT).show()
+                },
+                reminderTime.substring(0, 2).toInt(),
+                reminderTime.substring(3, 5).toInt(),
+                true
+            ).show()
+        }) {
+            Text("Setează oră notificare: $reminderTime", color = textColor)
+        }
+
 
         Spacer(modifier = Modifier.height(24.dp))
 

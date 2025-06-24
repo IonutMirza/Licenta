@@ -7,6 +7,7 @@ import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothSocket
 import android.content.Context
+import android.util.Log
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -38,7 +39,6 @@ import java.io.InputStream
 import java.io.OutputStream
 import java.util.*
 
-
 @SuppressLint("MissingPermission", "ContextCastToActivity")
 @Composable
 fun HomePage(
@@ -50,17 +50,16 @@ fun HomePage(
     onCarSelected: (Car) -> Unit
 ) {
     val context = LocalContext.current
-    val prefs = context.getSharedPreferences("app_settings", Context.MODE_PRIVATE)
-    val darkModeEnabled = remember { mutableStateOf(prefs.getBoolean("dark_mode", false)) }
+    val prefs = context.getSharedPreferences("settings", Context.MODE_PRIVATE)
+    var darkModeEnabled by remember { mutableStateOf(prefs.getBoolean("dark_mode", false)) }
 
-    // Reîncarcă la fiecare recompoziție pentru a reflecta toggle-ul din altă pagină
     LaunchedEffect(Unit) {
         snapshotFlow { prefs.getBoolean("dark_mode", false) }
-            .collect { darkModeEnabled.value = it }
+            .collect { darkModeEnabled = it }
     }
 
-    val backgroundColor = if (darkModeEnabled.value) Color(0xFF121212) else Color.White
-    val textColor = if (darkModeEnabled.value) Color.White else Color.Black
+    val backgroundColor = if (darkModeEnabled) Color(0xFF121212) else Color.White
+    val textColor       = if (darkModeEnabled) Color.White       else Color.Black
 
     val user = FirebaseAuth.getInstance().currentUser
     val username = user?.email?.substringBefore("@") ?: "User"
@@ -156,6 +155,9 @@ fun HomePage(
         Spacer(Modifier.height(8.dp))
         Text("Welcome, $username!", fontSize = 24.sp, color = textColor)
         Spacer(Modifier.height(16.dp))
+        val uid = FirebaseAuth.getInstance().currentUser?.uid ?: "No UID"
+        Text("Your UID: $uid", fontSize = 14.sp, color = textColor)
+        Spacer(Modifier.height(16.dp))
 
         Text(
             text = "Bluetooth Status: $bluetoothStatus" + (connectedDeviceName?.let { " - $it" } ?: ""),
@@ -230,7 +232,7 @@ fun HomePage(
                 modifier = Modifier.fillMaxWidth(),
                 colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2E7D32))
             ) {
-                Text("View Data Specifications", color = Color.White)
+                Text("View Data Specifications", color = textColor)
             }
             Spacer(Modifier.height(8.dp))
             Button(
@@ -241,7 +243,7 @@ fun HomePage(
                 modifier = Modifier.fillMaxWidth(),
                 colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1565C0))
             ) {
-                Text("Read Live Data", color = Color.White)
+                Text("Read Live Data", color = textColor)
             }
             Spacer(Modifier.height(8.dp))
             Button(
@@ -252,7 +254,7 @@ fun HomePage(
                 modifier = Modifier.fillMaxWidth(),
                 colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF8E24AA)) // mov
             ) {
-                Text("Read Error Codes", color = Color.White)
+                Text("Read Error Codes", color = textColor)
             }
             Spacer(Modifier.height(8.dp))
             Button(
@@ -262,7 +264,7 @@ fun HomePage(
                 modifier = Modifier.fillMaxWidth(),
                 colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFD32F2F))
             ) {
-                Text("Clear Error Codes", color = Color.White)
+                Text("Clear Error Codes", color = textColor)
             }
         }
 
@@ -272,15 +274,16 @@ fun HomePage(
             colors = ButtonDefaults.buttonColors(containerColor = Color.Red),
             modifier = Modifier.fillMaxWidth()
         ) {
-            Text("Log Out", color = Color.White)
+            Text("Log Out", color = textColor)
         }
 
+        Spacer(Modifier.height(16.dp))
         Spacer(Modifier.height(16.dp))
         BottomNavigationBar(
             onMapClick = onNavigateToMapPage,
             onGarageClick = onNavigateToGaragePage,
             onSettingsClick = onNavigateToSettingsPage,
-            //iconTintColor = textColor
+            textColor = textColor
         )
     }
 
@@ -419,7 +422,7 @@ private fun attemptObdConnection(
     }
 
     val pairedDevices: Set<BluetoothDevice> = bluetoothAdapter.bondedDevices
-    val obdDevice = pairedDevices.firstOrNull { it.name.contains("OBD", ignoreCase = true) }
+    val obdDevice = pairedDevices.firstOrNull { it.name?.contains("OBD", ignoreCase = true) == true }
 
     if (obdDevice == null) {
         Toast.makeText(context, "No OBD device found", Toast.LENGTH_SHORT).show()
@@ -705,8 +708,10 @@ fun AddCarDialog(
 fun BottomNavigationBar(
     onMapClick: () -> Unit,
     onGarageClick: () -> Unit,
-    onSettingsClick: () -> Unit
-) {
+    onSettingsClick: () -> Unit,
+    textColor: Color
+)
+{
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
         Row(
             modifier = Modifier

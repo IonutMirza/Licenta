@@ -25,6 +25,47 @@ import coil.compose.rememberAsyncImagePainter
 import com.google.firebase.auth.EmailAuthProvider
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.FirebaseUser
+import java.io.File
+import android.net.Uri
+import com.example.licenta.utils.refreshAllUserStats
+import com.example.licenta.utils.refreshUserStatsFromTrips
+import com.google.firebase.firestore.ktx.firestore
+import com.google.firebase.ktx.Firebase
+import android.util.Log
+
+private fun emailToUsername(email: String?): String {
+    return email?.substringBefore("@") ?: "-"
+}
+
+
+fun fetchUserStats(
+    context: Context,
+    onStatsLoaded: (tripCount: Long, avgScore: Double) -> Unit
+) {
+    val uid = FirebaseAuth.getInstance().currentUser?.uid ?: return
+    Firebase.firestore.collection("user-stats")
+        .document(uid)
+        .get()
+        .addOnSuccessListener { doc ->
+            val tripCount = doc.getLong("tripCount") ?: 0L
+            val totalScore = doc.getDouble("totalScore") ?: 0.0
+            val avgScore = if (tripCount > 0) totalScore / tripCount else 0.0
+            onStatsLoaded(tripCount, avgScore)
+        }
+        .addOnFailureListener {
+            Toast.makeText(context, "Failed to load user stats", Toast.LENGTH_SHORT).show()
+            onStatsLoaded(0, 0.0)
+        }
+}
+
+fun disableAllAppNotifications(ctx: Context) {
+    // 1) Anulează orice WorkManager cu tag-ul nostru
+    androidx.work.WorkManager.getInstance(ctx)
+        .cancelAllWorkByTag("app_notification")
+
+    // 2) Şterge notificările deja afişate
+    androidx.core.app.NotificationManagerCompat.from(ctx).cancelAll()
+}
 
 @Composable
 fun SettingsPage(
@@ -35,20 +76,59 @@ fun SettingsPage(
 ) {
     val context = LocalContext.current
     val user = FirebaseAuth.getInstance().currentUser
-
     val prefs: SharedPreferences = context.getSharedPreferences("settings", Context.MODE_PRIVATE)
-    var notificationsEnabled by remember { mutableStateOf(true) }
+
+    var notificationsEnabled by remember {
+        mutableStateOf(prefs.getBoolean("notifications_enabled", true))
+    }
+
     var darkModeEnabled by rememberSaveable {
         mutableStateOf(prefs.getBoolean("dark_mode", false))
     }
-    var autoConnectOBD by remember { mutableStateOf(true) }
-    var locationTrackingEnabled by remember { mutableStateOf(true) }
+    var locationTrackingEnabled by remember {
+        mutableStateOf(prefs.getBoolean("location_tracking_enabled", true))
+    }
+
     var showPasswordDialog by remember { mutableStateOf(false) }
     var showScoreDialog by remember { mutableStateOf(false) }
 
     val isDark = darkModeEnabled
     val backgroundColor = if (isDark) Color(0xFF1E1E1E) else Color.White
     val textColor = if (isDark) Color.White else Color.Black
+    var totalTrips by remember { mutableStateOf(0L) }
+    var avgScore by remember { mutableStateOf(0.0) }
+    var isLeaderboardLoading by remember { mutableStateOf(false) }   // ↙ flag de „loading”
+    var isScoreLoading by remember { mutableStateOf(false) }
+
+
+
+
+    LaunchedEffect(user?.uid) {
+        user?.uid?.let { uid ->
+            refreshUserStatsFromTrips(uid) {           // ⇢ generează / actualizează doc-ul
+                Firebase.firestore                      //    „user-stats/<uid>”
+                    .collection("user-stats")
+                    .document(uid)
+                    .addSnapshotListener { doc, _ ->
+                        if (doc != null && doc.exists()) {
+                            val trips = doc.getLong("tripCount") ?: 0L
+                            val total = doc.getDouble("totalScore") ?: 0.0
+                            totalTrips = trips
+                            avgScore   = if (trips > 0) total / trips else 0.0
+                        }
+                    }
+            }
+        }
+    }
+
+    var showLeaderboardDialog by remember { mutableStateOf(false) }
+    data class RankRow(
+        val uid: String,
+        val avg: Double,
+        val trips: Long,
+        var username: String = " - ")
+    val leaderboard = remember { mutableStateListOf<RankRow>() }
+
 
     Surface(
         modifier = Modifier
@@ -76,7 +156,21 @@ fun SettingsPage(
                         modifier = Modifier.align(Alignment.Center)
                     )
                     IconButton(
-                        onClick = { showScoreDialog = true },
+                        onClick = {
+                            val uid = FirebaseAuth.getInstance().currentUser?.uid
+                            if (uid != null) {
+                                showScoreDialog = true
+                                isScoreLoading = true
+
+                                fetchUserStats(context) { trips, avg ->
+                                    totalTrips = trips
+                                    avgScore = avg
+                                    isScoreLoading = false
+                                }
+                            } else {
+                                Toast.makeText(context, "User not found", Toast.LENGTH_SHORT).show()
+                            }
+                        },
                         modifier = Modifier.align(Alignment.TopEnd).size(32.dp)
                     ) {
                         Icon(
@@ -85,6 +179,61 @@ fun SettingsPage(
                             tint = textColor
                         )
                     }
+
+                    IconButton(
+                            modifier = Modifier
+                                .align(Alignment.TopStart)
+                                .size(32.dp),
+                    onClick = {
+                        // 1. Deschidem dialogul instant
+                        showLeaderboardDialog = true
+                        isLeaderboardLoading  = true
+                        leaderboard.clear()
+
+                        // 2. Pornim încărcarea în background
+                        refreshAllUserStats {
+                            Firebase.firestore.collection("user-stats").get()
+                                .addOnSuccessListener { statsSnap ->
+                                    val tempRows = statsSnap.documents.mapNotNull { d ->
+                                        val trips = d.getLong("tripCount") ?: return@mapNotNull null
+                                        val total = d.getDouble("totalScore") ?: 0.0
+                                        RankRow(
+                                            uid    = d.id,
+                                            avg    = if (trips > 0) total / trips else 0.0,
+                                            trips  = trips
+                                        )
+                                    }
+
+                                    // ─ aducem username-urile
+                                    Firebase.firestore.collection("users").get()
+                                        .addOnSuccessListener { userSnap ->
+                                            val map = userSnap.documents.associate {
+                                                it.id to emailToUsername(it.getString("email"))
+                                            }
+
+                                            leaderboard.clear()
+                                            leaderboard.addAll(
+                                                tempRows
+                                                    .onEach { it.username = map[it.uid] ?: "-" }
+                                                    .sortedWith(
+                                                        compareByDescending<RankRow> { it.avg }
+                                                            .thenByDescending { it.trips }
+                                                            .thenBy { it.username.lowercase() }
+                                                    )
+                                            )
+                                            isLeaderboardLoading = false   // gata!
+                                        }
+                                }
+                        }
+                    }
+                    ) {
+                    Icon(
+                        painter = painterResource(id = R.drawable.trofeu),
+                        contentDescription = "Leaderboard",
+                        tint = textColor
+                    )
+                }
+
                 }
 
                 Spacer(modifier = Modifier.height(24.dp))
@@ -95,13 +244,35 @@ fun SettingsPage(
                 AuthButtons(user, context, textColor)
                 Spacer(modifier = Modifier.height(24.dp))
 
-                SettingToggle("🔔 Notifications", notificationsEnabled, textColor) { notificationsEnabled = it }
+                SettingToggle("🔔 Notifications", notificationsEnabled, textColor) { enabled ->
+                    notificationsEnabled = enabled
+                    prefs.edit().putBoolean("notifications_enabled", enabled).apply()
+
+                    if (enabled) {
+                        Toast.makeText(context, "Notificările au fost activate", Toast.LENGTH_SHORT).show()
+                    } else {
+                        disableAllAppNotifications(context)           // ⬅️ funcţie adăugată la pasul 3
+                        Toast.makeText(context, "Toate notificările au fost dezactivate", Toast.LENGTH_SHORT).show()
+                    }
+                }
+
                 SettingToggle("🌙 Dark Mode", darkModeEnabled, textColor) {
                     darkModeEnabled = it
                     prefs.edit().putBoolean("dark_mode", it).apply()
                 }
-                SettingToggle("🔌 Auto-connect OBD", autoConnectOBD, textColor) { autoConnectOBD = it }
-                SettingToggle("📍 Location Tracking", locationTrackingEnabled, textColor) { locationTrackingEnabled = it }
+
+                SettingToggle("📍 Location Tracking", locationTrackingEnabled, textColor) { enabled ->
+                    locationTrackingEnabled = enabled
+                    prefs.edit().putBoolean("location_tracking_enabled", enabled).apply()
+
+                    if (enabled) {
+                        Toast.makeText(context, "Tracking-ul locației a fost activat", Toast.LENGTH_SHORT).show()
+                    } else {
+                        disableAllAppNotifications(context)           // ⬅️ funcţie adăugată la pasul 3
+                        Toast.makeText(context, "Tracking-ul locației a fost dezactivat", Toast.LENGTH_SHORT).show()
+                    }
+                }
+
             }
 
             Column(modifier = Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
@@ -124,7 +295,7 @@ fun SettingsPage(
                     colors = ButtonDefaults.buttonColors(containerColor = Color.Red)
                 ) { Text("Log Out", color = Color.White) }
 
-                Spacer(modifier = Modifier.height(16.dp))
+                Spacer(modifier = Modifier.height(30.dp))
             }
         }
 
@@ -142,21 +313,103 @@ fun SettingsPage(
 
         if (showScoreDialog) {
             AlertDialog(
-                onDismissRequest = { showScoreDialog = false },
+                onDismissRequest = {
+                    showScoreDialog = false
+                    isScoreLoading = false
+                },
                 title = { Text("Scor utilizator", color = textColor) },
                 text = {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text("5/5 ⭐", fontSize = 18.sp, fontWeight = FontWeight.Medium, color = textColor)
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text("Total curse efectuate: 0", fontSize = 16.sp, color = textColor)
+                    if (isScoreLoading) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            CircularProgressIndicator()
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text("Se încarcă…", color = textColor)
+                        }
+                    } else {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text(
+                                String.format("%.1f/5 ⭐", avgScore),
+                                fontSize = 18.sp,
+                                fontWeight = FontWeight.Medium,
+                                color = textColor
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text(
+                                "Total curse efectuate: $totalTrips",
+                                fontSize = 16.sp,
+                                color = textColor
+                            )
+                        }
                     }
                 },
                 confirmButton = {
-                    Button(onClick = { showScoreDialog = false }) {
+                    TextButton(
+                        onClick = {
+                            showScoreDialog = false
+                            isScoreLoading = false
+                        }
+                    ) {
                         Text("Închide", color = textColor)
                     }
                 },
                 containerColor = backgroundColor
+            )
+        }
+
+        if (showLeaderboardDialog) if (showLeaderboardDialog) {
+            AlertDialog(
+                onDismissRequest = {
+                    showLeaderboardDialog = false
+                    isLeaderboardLoading  = false      // reset pt. următoarea deschidere
+                },
+                containerColor = backgroundColor,
+                title = { Text("Clasament utilizatori", color = textColor) },
+                text = {
+                    when {
+                        isLeaderboardLoading -> {               // 🔄 spinner
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                CircularProgressIndicator()
+                                Spacer(Modifier.height(8.dp))
+                                Text("Se încarcă…", color = textColor)
+                            }
+                        }
+
+                        leaderboard.isEmpty() -> {              // fallback
+                            Text("Nicio înregistrare disponibilă", color = textColor)
+                        }
+
+                        else -> {                               // rezultatele
+                            var rank = 0
+                            var lastPair: Pair<Double, Long>? = null
+
+                            Column {
+                                leaderboard.forEachIndexed { index, row ->
+                                    val pair = row.avg to row.trips
+                                    if (pair != lastPair) rank = index + 1
+                                    lastPair = pair
+
+                                    Text(
+                                        "$rank.  ${row.username}  •  " +
+                                                "${"%.2f".format(row.avg)}/5  •  ${row.trips} curse",
+                                        color = textColor,
+                                        fontSize = 14.sp,
+                                        modifier = Modifier.padding(vertical = 2.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
+                },
+                confirmButton = {
+                    TextButton(
+                        onClick = {
+                            showLeaderboardDialog = false
+                            isLeaderboardLoading  = false
+                        }
+                    ) {
+                        Text("Închide", color = textColor)
+                    }
+                }
             )
         }
     }
@@ -165,21 +418,43 @@ fun SettingsPage(
 @Composable
 fun ProfileSection(user: FirebaseUser?, textColor: Color) {
     val context = LocalContext.current
-    val prefs = context.getSharedPreferences("settings", Context.MODE_PRIVATE)
-    var imageUri by rememberSaveable {
-        mutableStateOf(prefs.getString("profile_image_uri", null))
+    val imageFile = File(context.filesDir, "profile_picture.jpg")
+    val imageUriState = remember { mutableStateOf<Uri?>(null) }
+
+    LaunchedEffect(Unit) {
+        if (imageFile.exists()) {
+            imageUriState.value = android.net.Uri.fromFile(imageFile).buildUpon()
+                .appendQueryParameter("ts", imageFile.lastModified().toString())
+                .build()
+        }
     }
+
 
     val launcher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
     ) { uri ->
-        imageUri = uri?.toString()
-        prefs.edit().putString("profile_image_uri", uri?.toString()).apply()
+        uri?.let {
+            try {
+                val inputStream = context.contentResolver.openInputStream(it)
+                val outputStream = imageFile.outputStream()
+                inputStream?.copyTo(outputStream)
+                inputStream?.close()
+                outputStream.close()
+
+                imageUriState.value = android.net.Uri.fromFile(imageFile).buildUpon()
+                    .appendQueryParameter("ts", System.currentTimeMillis().toString())
+                    .build()
+            } catch (e: Exception) {
+                Toast.makeText(context, "Failed to save image", Toast.LENGTH_SHORT).show()
+            }
+        }
     }
+
+
 
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
         Image(
-            painter = imageUri?.let { rememberAsyncImagePainter(it) }
+            painter = imageUriState.value?.let { rememberAsyncImagePainter(it) }
                 ?: painterResource(id = R.drawable.default_profile),
             contentDescription = "Profile Picture",
             modifier = Modifier
@@ -192,7 +467,11 @@ fun ProfileSection(user: FirebaseUser?, textColor: Color) {
             Text("Select Profile Picture", color = textColor)
         }
         Spacer(modifier = Modifier.height(12.dp))
-        Text(text = user?.email ?: "No email", fontSize = 16.sp, color = textColor)
+        Text(
+            text  = emailToUsername(user?.email),
+            fontSize = 16.sp,
+            color = textColor
+        )
         Spacer(modifier = Modifier.height(4.dp))
         Text(
             text = if (user?.isEmailVerified == true) "Email Verified ✅" else "Email Not Verified ❌",
@@ -201,7 +480,6 @@ fun ProfileSection(user: FirebaseUser?, textColor: Color) {
         )
     }
 }
-
 
 @Composable
 fun AuthButtons(user: FirebaseUser?, context: Context, textColor: Color) {

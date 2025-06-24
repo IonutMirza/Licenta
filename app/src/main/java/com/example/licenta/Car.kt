@@ -11,6 +11,7 @@ data class Car(
     val licensePlate: String = "",
     val userId: String = "",
 
+
     // NOU - informații extra
     val rovinietaDate: String? = null,
     val insuranceDate: String? = null,

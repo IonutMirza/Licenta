@@ -2,7 +2,7 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
-    <!-- Permisiunile rămân în afara tag-ului <application> -->
+    <!-- Permisiuni globale (în afara tag-ului <application>) -->
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.INTERNET" />
@@ -10,7 +10,8 @@
     <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" />
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
     <uses-permission android:name="android.permission.BLUETOOTH_SCAN" />
-    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"/>
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
 
     <application
@@ -24,12 +25,13 @@
         android:theme="@style/Theme.Licenta"
         tools:targetApi="31">
 
-        <!-- Cheia Google Maps (rămâne cum era) -->
+
+        <!-- Google Maps API Key -->
         <meta-data
             android:name="com.google.android.geo.API_KEY"
             android:value="@string/google_api_key" />
 
-        <!-- MainActivity existentă -->
+        <!-- MainActivity (launcher) -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
@@ -41,14 +43,13 @@
             </intent-filter>
         </activity>
 
-        <!-- ObdConnectActivity – add this line -->
+        <!-- Activitate OBD Connect (fără export) -->
         <activity
             android:name=".ObdConnectActivity"
             android:exported="false"
             android:label="OBD Connect"
             android:theme="@style/Theme.Licenta" />
 
-        <!-- Dacă mai ai alte activități (MapPage, SwitchPage, WalletPage)
-             cu intent-filter sau cascade, le mai poți adăuga aici după același model -->
+        <!-- Alte activități (dacă sunt) se adaugă aici -->
     </application>
 </manifest>
