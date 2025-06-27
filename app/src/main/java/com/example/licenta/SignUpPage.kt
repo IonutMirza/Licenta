@@ -21,8 +21,6 @@ import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.SetOptions
 import com.google.firebase.firestore.firestore
 
-
-
 @Composable
 fun SignUpPage(
     onNavigateToHomePage: () -> Unit,
@@ -44,7 +42,7 @@ fun SignUpPage(
     ) {
         Text("Drive like a Pro", fontSize = 32.sp, fontWeight = FontWeight.Bold)
         Spacer(modifier = Modifier.height(32.dp))
-        Text(if (isSignUp) "Create an Account" else "Login", fontSize = 20.sp)
+        Text(if (isSignUp) "Crează un cont" else "Conectează-te", fontSize = 20.sp)
 
         OutlinedTextField(
             value = email,
@@ -55,7 +53,7 @@ fun SignUpPage(
         OutlinedTextField(
             value = password,
             onValueChange = { password = it },
-            label = { Text("Password") },
+            label = { Text("Parolă") },
             visualTransformation = PasswordVisualTransformation(),
             modifier = Modifier.fillMaxWidth()
         )
@@ -74,7 +72,7 @@ fun SignUpPage(
                                 db.collection("users")
                                     .document(uid)
                                     .set(mapOf("email" to emailSaved), SetOptions.merge())
-                                Toast.makeText(context, "Account Created!", Toast.LENGTH_SHORT).show()
+                                Toast.makeText(context, "Cont Creat!", Toast.LENGTH_SHORT).show()
                                 onNavigateToHomePage()
 
                         } else {
@@ -103,15 +101,46 @@ fun SignUpPage(
             },
             modifier = Modifier.fillMaxWidth()
         ) {
-            Text(if (isSignUp) "Sign Up" else "Login")
+            Text(if (isSignUp) "Creare cont" else "Conectare")
         }
 
         TextButton(onClick = { isSignUp = !isSignUp }) {
-            Text(if (isSignUp) "Already have an account? Log in" else "Don't have an account? Sign up")
+            Text(if (isSignUp) "Ai deja un cont? Conectează-te" else "Nu ai cont? Crează unul")
         }
 
+        TextButton(onClick = { isSignUp = !isSignUp }) {
+            if (!isSignUp) {
+                TextButton(onClick = {
+                    if (email.isNotBlank()) {
+                        auth.sendPasswordResetEmail(email)
+                            .addOnSuccessListener {
+                                Toast.makeText(
+                                    context,
+                                    "E-mail de resetare trimis către $email",
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                            }
+                            .addOnFailureListener {
+                                Toast.makeText(
+                                    context,
+                                    "Eroare: ${it.message}",
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                            }
+                    } else {
+                        Toast.makeText(
+                            context,
+                            "Introdu adresa de e-mail pentru a primi linkul de resetare.",
+                            Toast.LENGTH_SHORT
+                        ).show()
+                    }
+                }) {
+                    Text("Ai uitat parola? Trimite e-mail de resetare")
+                }
+            }
+        }
 
-        Spacer(modifier = Modifier.height(16.dp))
+        Spacer(modifier = Modifier.height(10.dp))
 
         OutlinedButton(
             onClick = { onGoogleSignInClick() },
@@ -131,30 +160,8 @@ fun SignUpPage(
                 modifier = Modifier.size(24.dp)
             )
             Spacer(modifier = Modifier.width(8.dp))
-            Text("Continue with Google")
+            Text("Continuă cu Google")
         }
 
-        Spacer(modifier = Modifier.height(8.dp))
-
-        OutlinedButton(
-            onClick = { onNavigateToHomePage() },
-            colors = ButtonDefaults.outlinedButtonColors(
-                containerColor = Color(0xFFF0F0F0),
-                contentColor = Color.Black
-            ),
-            border = BorderStroke(1.dp, Color.Gray),
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(50.dp),
-            shape = RoundedCornerShape(8.dp)
-        ) {
-            Image(
-                painter = painterResource(id = R.drawable.apple),
-                contentDescription = "Apple Logo",
-                modifier = Modifier.size(24.dp)
-            )
-            Spacer(modifier = Modifier.width(8.dp))
-            Text("Continue with Apple")
-        }
     }
 }

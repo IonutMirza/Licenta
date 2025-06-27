@@ -7,7 +7,6 @@ import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothSocket
 import android.content.Context
-import android.util.Log
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -90,7 +89,7 @@ fun HomePage(
     var isEcuReady by remember { mutableStateOf(false) }
     var ecuStatus by remember { mutableStateOf("ECU: Not initialized") }
     var showObdClearConfirmDialog by remember { mutableStateOf(false) }
-    val scope = rememberCoroutineScope() // NEW
+    val scope = rememberCoroutineScope()
 
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
@@ -117,7 +116,7 @@ fun HomePage(
                 }
             )
         } else {
-            Toast.makeText(context, "Bluetooth permissions denied", Toast.LENGTH_SHORT).show()
+            Toast.makeText(context, "Permisiunile Bluetooth au fost refuzate", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -127,7 +126,7 @@ fun HomePage(
                 .whereEqualTo("userId", uid)
                 .addSnapshotListener { snapshot, error ->
                     if (error != null) {
-                        Toast.makeText(context, "Error loading cars: ${error.message}", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(context, "Eroare la încărcarea mașinilor: ${error.message}", Toast.LENGTH_SHORT).show()
                         return@addSnapshotListener
                     }
                     if (snapshot != null) {
@@ -153,10 +152,7 @@ fun HomePage(
     ) {
         Text("Drive like a Pro", fontSize = 32.sp, color = MaterialTheme.colorScheme.primary)
         Spacer(Modifier.height(8.dp))
-        Text("Welcome, $username!", fontSize = 24.sp, color = textColor)
-        Spacer(Modifier.height(16.dp))
-        val uid = FirebaseAuth.getInstance().currentUser?.uid ?: "No UID"
-        Text("Your UID: $uid", fontSize = 14.sp, color = textColor)
+        Text("Bine ai venit, $username!", fontSize = 24.sp, color = textColor)
         Spacer(Modifier.height(16.dp))
 
         Text(
@@ -170,7 +166,7 @@ fun HomePage(
             text = ecuStatus,
             color = when {
                 isEcuReady -> Color.Green
-                isObdConnected -> Color(0xFFFFA000) // amber
+                isObdConnected -> Color(0xFFFFA000)
                 else -> Color.Red
             },
             fontSize = 16.sp
@@ -179,7 +175,7 @@ fun HomePage(
 
         selectedCar?.let {
             Text(
-                text = "Selected Car: ${it.brand} ${it.model}",
+                text = "Mașina selectată: ${it.brand} ${it.model}",
                 fontSize = 18.sp,
                 color = textColor
             )
@@ -203,7 +199,7 @@ fun HomePage(
 
         Spacer(Modifier.height(16.dp))
         Button(onClick = { showAddCarDialog = true }, modifier = Modifier.fillMaxWidth()) {
-            Text("Add New Car", color = textColor)
+            Text("Adaugă o nouă mașină", color = textColor)
         }
         Spacer(Modifier.height(8.dp))
 
@@ -219,7 +215,7 @@ fun HomePage(
             },
             modifier = Modifier.fillMaxWidth()
         ) {
-            Text("Connect to OBD", color = textColor)
+            Text("Conecteză-te la OBD", color = textColor)
         }
 
         if (isObdConnected && isEcuReady) {
@@ -232,7 +228,7 @@ fun HomePage(
                 modifier = Modifier.fillMaxWidth(),
                 colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2E7D32))
             ) {
-                Text("View Data Specifications", color = textColor)
+                Text("Vezi specificațiile", color = textColor)
             }
             Spacer(Modifier.height(8.dp))
             Button(
@@ -243,7 +239,7 @@ fun HomePage(
                 modifier = Modifier.fillMaxWidth(),
                 colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1565C0))
             ) {
-                Text("Read Live Data", color = textColor)
+                Text("Citește date live", color = textColor)
             }
             Spacer(Modifier.height(8.dp))
             Button(
@@ -252,9 +248,9 @@ fun HomePage(
                     showObdErrorDialog = true
                 },
                 modifier = Modifier.fillMaxWidth(),
-                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF8E24AA)) // mov
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF8E24AA))
             ) {
-                Text("Read Error Codes", color = textColor)
+                Text("Citește Codurile de Eroare", color = textColor)
             }
             Spacer(Modifier.height(8.dp))
             Button(
@@ -264,7 +260,7 @@ fun HomePage(
                 modifier = Modifier.fillMaxWidth(),
                 colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFD32F2F))
             ) {
-                Text("Clear Error Codes", color = textColor)
+                Text("Șterge Codurile de Eroare", color = textColor)
             }
         }
 
@@ -274,7 +270,7 @@ fun HomePage(
             colors = ButtonDefaults.buttonColors(containerColor = Color.Red),
             modifier = Modifier.fillMaxWidth()
         ) {
-            Text("Log Out", color = textColor)
+            Text("Deconectare", color = textColor)
         }
 
         Spacer(Modifier.height(16.dp))
@@ -298,7 +294,7 @@ fun HomePage(
             val uid = user?.uid ?: return@AddCarDialog
             val yearInt = y.toIntOrNull()
             if (b.isBlank() || m.isBlank() || yearInt == null || lp.isBlank()) {
-                Toast.makeText(context, "Complete all fields correctly", Toast.LENGTH_SHORT).show()
+                Toast.makeText(context, "Completează corect toate câmpurile", Toast.LENGTH_SHORT).show()
                 return@AddCarDialog
             }
             firestore.collection("cars1")
@@ -307,7 +303,7 @@ fun HomePage(
                 .get()
                 .addOnSuccessListener { querySnapshot ->
                     if (querySnapshot.documents.isNotEmpty()) {
-                        Toast.makeText(context, "This car already exists.", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(context, "Această mașină există deja", Toast.LENGTH_SHORT).show()
                     } else {
                         val docRef = firestore.collection("cars1").document()
                         val car = Car(
@@ -320,17 +316,17 @@ fun HomePage(
                         )
                         docRef.set(car)
                             .addOnSuccessListener {
-                                Toast.makeText(context, "Car saved successfully", Toast.LENGTH_SHORT).show()
+                                Toast.makeText(context, "Mașina s-a salvat cu succces", Toast.LENGTH_SHORT).show()
                                 showAddCarDialog = false
                                 brand = ""; model = ""; year = ""; licensePlate = ""
                             }
                             .addOnFailureListener { e ->
-                                Toast.makeText(context, "Error saving: ${e.message}", Toast.LENGTH_SHORT).show()
+                                Toast.makeText(context, "Eroare la salvare: ${e.message}", Toast.LENGTH_SHORT).show()
                             }
                     }
                 }
                 .addOnFailureListener { e ->
-                    Toast.makeText(context, "Error checking duplicate: ${e.message}", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(context, "Eroare la verificarea duplicatului: ${e.message}", Toast.LENGTH_SHORT).show()
                 }
         },
 
@@ -339,8 +335,8 @@ fun HomePage(
     if (showObdClearConfirmDialog) {
         AlertDialog(
             onDismissRequest = { showObdClearConfirmDialog = false },
-            title = { Text("Confirm Clear Codes") },
-            text = { Text("Are you sure you want to clear all error codes?") },
+            title = { Text("Coduri șterse cu succes!") },
+            text = { Text("Ești sigur că vrei să ștergi toate codurile?") },
             confirmButton = {
                 TextButton(onClick = {
                     showObdClearConfirmDialog = false
@@ -348,17 +344,17 @@ fun HomePage(
                         val resp = sendElmCommand("04", obdInStream, obdOutStream)
                         Toast.makeText(
                             context,
-                            if (resp.contains("44")) "Codes cleared successfully" else "Failed to clear codes",
+                            if (resp.contains("44")) "Coduri șterse cu succes" else "Eroare la ștergerea codurilor",
                             Toast.LENGTH_SHORT
                         ).show()
                     }
                 }) {
-                    Text("Yes")
+                    Text("Da")
                 }
             },
             dismissButton = {
                 TextButton(onClick = { showObdClearConfirmDialog = false }) {
-                    Text("No")
+                    Text("Nu")
                 }
             }
         )
@@ -370,7 +366,6 @@ fun HomePage(
             obdOutStream = obdOutStream,
             onDismiss = { showObdSpecsDialog = false },
             rawResult = obdSpecsRaw
-            //textColor = textColor
         ) { raw -> obdSpecsRaw = raw }
     }
 
@@ -380,7 +375,6 @@ fun HomePage(
             obdOutStream = obdOutStream,
             onDismiss = { showObdLiveDataDialog = false },
             liveData = liveDataMap,
-            //Color = textColor
         ) { dataMap -> liveDataMap = dataMap }
     }
 
@@ -393,10 +387,6 @@ fun HomePage(
         ) { codes -> errorCodes = codes }
     }
 }
-
-
-// ————————————————————————————————————————————————
-// Helper function to attempt real OBD connection once perms granted:
 
 @SuppressLint("MissingPermission")
 private fun attemptObdConnection(
@@ -411,12 +401,12 @@ private fun attemptObdConnection(
     ) -> Unit
 ) {
     if (bluetoothAdapter == null) {
-        Toast.makeText(context, "Bluetooth not supported", Toast.LENGTH_SHORT).show()
+        Toast.makeText(context, "Bluetooth-ul nu este suportat", Toast.LENGTH_SHORT).show()
         onConnectionResult(null, false, null, null, null)
         return
     }
     if (!bluetoothAdapter.isEnabled) {
-        Toast.makeText(context, "Bluetooth not enabled", Toast.LENGTH_SHORT).show()
+        Toast.makeText(context, "Bluetooth-ul nu este disponibil", Toast.LENGTH_SHORT).show()
         onConnectionResult(null, false, null, null, null)
         return
     }
@@ -425,7 +415,7 @@ private fun attemptObdConnection(
     val obdDevice = pairedDevices.firstOrNull { it.name?.contains("OBD", ignoreCase = true) == true }
 
     if (obdDevice == null) {
-        Toast.makeText(context, "No OBD device found", Toast.LENGTH_SHORT).show()
+        Toast.makeText(context, "Niciun dispozitiv OBD găsit", Toast.LENGTH_SHORT).show()
         onConnectionResult(null, false, null, null, null)
         return
     }
@@ -441,11 +431,11 @@ private fun attemptObdConnection(
             val inSt = socket.inputStream
             (context as? Activity)?.runOnUiThread {
                 onConnectionResult(obdDevice.name, true, socket, outSt, inSt)
-                Toast.makeText(context, "Connected to ${obdDevice.name}", Toast.LENGTH_SHORT).show()
+                Toast.makeText(context, "Conectat la ${obdDevice.name}", Toast.LENGTH_SHORT).show()
             }
         } catch (e: IOException) {
             (context as? Activity)?.runOnUiThread {
-                Toast.makeText(context, "Connection error: ${e.message}", Toast.LENGTH_LONG).show()
+                Toast.makeText(context, "Eroare de conexiune: ${e.message}", Toast.LENGTH_LONG).show()
                 onConnectionResult(obdDevice.name, false, null, null, null)
             }
         }
@@ -509,7 +499,7 @@ suspend fun sendElmCommand(
             if (inStream.available() > 0) {
                 val len = inStream.read(buffer)
                 sb.append(String(buffer, 0, len))
-                if (sb.contains(">")) break            // prompt = răspuns complet
+                if (sb.contains(">")) break
             }
             delay(30)
         }
@@ -523,9 +513,6 @@ suspend fun sendElmCommand(
         return@withContext "ERR:${e.message}"
     }
 }
-
-// ————————————————————————————————————————————————
-// Dialog for PID 0100 → read supported PIDs (raw hex) and display:
 
 @Composable
 private fun ObdSpecsDialog(
@@ -547,17 +534,17 @@ private fun ObdSpecsDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("OBD Supported PIDs (0100)") },
+        title = { Text("OBD suportat PIDs (0100)") },
         text = {
             Column(modifier = Modifier.fillMaxWidth()) {
                 if (localRaw == null) {
-                    Text("Loading…", fontSize = 16.sp)
+                    Text("Se încarcă…", fontSize = 16.sp)
                     LinearProgressIndicator(modifier = Modifier.fillMaxWidth().padding(top = 8.dp))
                 } else {
-                    Text("Raw response: $localRaw", fontSize = 14.sp)
+                    Text("Raw răspuns: $localRaw", fontSize = 14.sp)
                     Spacer(Modifier.height(8.dp))
                     Text(
-                        "Interpreting bits → Each hex‐pair’s bits = supported PIDs.\n(See OBD-II spec for full bit‐mapping.)",
+                        "Interpretarea biților → Fiecare pereche hexadecimală reprezintă biți = PIDs suportate.\\n(Vezi specificația OBD-II pentru maparea completă a biților.))",
                         fontSize = 12.sp,
                         color = Color.Gray
                     )
@@ -566,7 +553,7 @@ private fun ObdSpecsDialog(
         },
         confirmButton = {
             TextButton(onClick = onDismiss) {
-                Text("Close")
+                Text("Închide")
             }
         }
     )
@@ -590,7 +577,7 @@ private fun ObdLiveDataDialog(
                 suspend fun pid(p: String) = sendElmCommand(p, obdInStream, obdOutStream)
 
                 val speedRaw = pid("010D")
-                results["Speed"] = speedRaw.takeIf { it.startsWith("410D", true) }?.let {
+                results["Viteză"] = speedRaw.takeIf { it.startsWith("410D", true) }?.let {
                     it.replace(" ", "").substring(4, 6).toInt(16).toString() + " km/h"
                 } ?: "N/A"
 
@@ -603,12 +590,12 @@ private fun ObdLiveDataDialog(
                 } ?: "N/A"
 
                 val tempRaw = pid("0105")
-                results["Engine Temp"] = tempRaw.takeIf { it.startsWith("4105", true) }?.let {
+                results["Twmperatură motor"] = tempRaw.takeIf { it.startsWith("4105", true) }?.let {
                     (it.replace(" ", "").substring(4, 6).toInt(16) - 40).toString() + " °C"
                 } ?: "N/A"
 
                 val throttleRaw = pid("0111")
-                results["Throttle"] = throttleRaw.takeIf { it.startsWith("4111", true) }?.let {
+                results["Clapetă accelerație"] = throttleRaw.takeIf { it.startsWith("4111", true) }?.let {
                     (it.replace(" ", "").substring(4, 6).toInt(16) * 100 / 255).toString() + " %"
                 } ?: "N/A"
 
@@ -621,11 +608,11 @@ private fun ObdLiveDataDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Live OBD Data") },
+        title = { Text("Citește date live de la OBD") },
         text = {
             Column(modifier = Modifier.fillMaxWidth()) {
                 if (localData.isEmpty()) {
-                    Text("Reading live data…", fontSize = 16.sp)
+                    Text("Se încarcă…", fontSize = 16.sp)
                     LinearProgressIndicator(modifier = Modifier.fillMaxWidth().padding(top = 8.dp))
                 } else {
                     localData.forEach { (key, value) ->
@@ -636,7 +623,7 @@ private fun ObdLiveDataDialog(
         },
         confirmButton = {
             TextButton(onClick = onDismiss) {
-                Text("Close")
+                Text("Închide")
             }
         }
     )
@@ -660,13 +647,13 @@ fun AddCarDialog(
     if (show) {
         AlertDialog(
             onDismissRequest = onDismiss,
-            title = { Text("Add New Car") },
+            title = { Text("Adaugă o mașină nouă") },
             text = {
                 Column {
                     OutlinedTextField(
                         value = b,
                         onValueChange = { b = it },
-                        label = { Text("Brand") },
+                        label = { Text("Marcă") },
                         singleLine = true
                     )
                     OutlinedTextField(
@@ -678,26 +665,26 @@ fun AddCarDialog(
                     OutlinedTextField(
                         value = y,
                         onValueChange = { y = it },
-                        label = { Text("Year") },
+                        label = { Text("Anul fabricației") },
                         singleLine = true,
                         keyboardOptions = KeyboardOptions.Default.copy(keyboardType = KeyboardType.Number)
                     )
                     OutlinedTextField(
                         value = lp,
                         onValueChange = { lp = it },
-                        label = { Text("License Plate") },
+                        label = { Text("Numărul de înmatriculare") },
                         singleLine = true
                     )
                 }
             },
             confirmButton = {
                 TextButton(onClick = { onConfirm(b, m, y, lp) }) {
-                    Text("Done")
+                    Text("Gata")
                 }
             },
             dismissButton = {
                 TextButton(onClick = onDismiss) {
-                    Text("Close")
+                    Text("Închide")
                 }
             }
         )
@@ -719,7 +706,7 @@ fun BottomNavigationBar(
                 .padding(top = 16.dp),
             horizontalArrangement = Arrangement.SpaceEvenly
         ) {
-            IconButton(onClick = { /* Home does nothing—already here */ }, modifier = Modifier.size(50.dp)) {
+            IconButton(onClick = { }, modifier = Modifier.size(50.dp)) {
                 Icon(
                     painter = painterResource(id = R.drawable.home),
                     contentDescription = "Home",
@@ -760,10 +747,7 @@ fun ObdErrorCodesDialog(
     errorCodes: List<String>,
     onCodesReady: (List<String>) -> Unit
 ) {
-    /** stare locală – ce coduri afișăm în UI  */
     var localCodes by remember { mutableStateOf(errorCodes) }
-
-    /** citim DTC-urile doar o dată, în IO thread, cu utilitarul sendElmCommand */
     LaunchedEffect(Unit) {
         if (localCodes.isEmpty()) {
             withContext(Dispatchers.IO) {
@@ -771,7 +755,7 @@ fun ObdErrorCodesDialog(
                 val codes = mutableListOf<String>()
 
                 if (resp.startsWith("43")) {
-                    val data = resp.drop(2)                      // scoate „43”
+                    val data = resp.drop(2)
                     for (i in data.indices step 4) {
                         if (i + 4 <= data.length) {
                             val raw = data.substring(i, i + 4)
@@ -779,21 +763,20 @@ fun ObdErrorCodesDialog(
                         }
                     }
                 }
-                if (codes.isEmpty()) codes.add("No error codes found.")
-                onCodesReady(codes)      // propagă spre HomePage dacă vrei
-                localCodes = codes       // actualizează UI
+                if (codes.isEmpty()) codes.add("Nu au fost găsite coduri de eroare")
+                onCodesReady(codes)
+                localCodes = codes
             }
         }
     }
 
-    /** UI – dialog propriu-zis */
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Error Codes (DTCs)") },
+        title = { Text("Coduri de eroare (DTCs)") },
         text = {
             Column {
                 if (localCodes.isEmpty()) {
-                    Text("Reading error codes…", fontSize = 16.sp)
+                    Text("Citire coduri de eroare…", fontSize = 16.sp)
                     LinearProgressIndicator(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -806,12 +789,12 @@ fun ObdErrorCodesDialog(
                 }
             }
         },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } }
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Închide") } }
     )
 }
 
 private fun parseDtc(hex: String): String {
-    if (hex.length < 4) return "Invalid Code"
+    if (hex.length < 4) return "Cod incorect"
     val firstByte = hex.substring(0, 2).toInt(16)
     val secondByte = hex.substring(2, 4)
     val type = when (firstByte shr 6) {

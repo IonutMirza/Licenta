@@ -32,30 +32,24 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // 1️⃣  Initialize Firebase & Google Places -------------------------------------------------
         Firebase.initialize(this)
         auth = FirebaseAuth.getInstance()
         if (!Places.isInitialized()) {
             Places.initialize(applicationContext, getString(R.string.google_api_key))
         }
 
-        // 2️⃣  Google Sign‑In configuration ------------------------------------------------------
         val gso = GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
             .requestIdToken(getString(R.string.default_web_client_id))
             .requestEmail()
             .build()
         googleSignInClient = GoogleSignIn.getClient(this, gso)
 
-        // 3️⃣  Compose UI ------------------------------------------------------------------------
         setContent {
             LicentaTheme {
                 val context = LocalContext.current
                 var currentScreen by remember { mutableStateOf(if (auth.currentUser != null) "home" else "signUp") }
                 var selectedCar by remember { mutableStateOf<Car?>(null) }
 
-                /* -------------------------------------------------------------
-                 *  Permission request for POST_NOTIFICATIONS (Android 13+)
-                 * ------------------------------------------------------------*/
                 LaunchedEffect(Unit) {
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                         val granted = ContextCompat.checkSelfPermission(
@@ -73,9 +67,6 @@ class MainActivity : ComponentActivity() {
                     }
                 }
 
-                /* -------------------------------------------------------------
-                 *  Google Sign‑In Launcher
-                 * ------------------------------------------------------------*/
                 val launcher = rememberLauncherForActivityResult(
                     contract = ActivityResultContracts.StartActivityForResult()
                 ) { result ->
@@ -88,17 +79,14 @@ class MainActivity : ComponentActivity() {
                                 if (authResult.isSuccessful) {
                                     currentScreen = "home"
                                 } else {
-                                    Toast.makeText(context, "Google sign‑in failed", Toast.LENGTH_SHORT).show()
+                                    Toast.makeText(context, "Conectarea cu Google nu a reușit", Toast.LENGTH_SHORT).show()
                                 }
                             }
                     } catch (e: ApiException) {
-                        Toast.makeText(context, "Google sign‑in error: ${e.message}", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(context, "Eroare la conectarea Google: ${e.message}", Toast.LENGTH_SHORT).show()
                     }
                 }
 
-                /* -------------------------------------------------------------
-                 *  App Navigation (very light state machine)
-                 * ------------------------------------------------------------*/
                 when (currentScreen) {
                     "signUp" -> SignUpPage(
                         onNavigateToHomePage = { currentScreen = "home" },

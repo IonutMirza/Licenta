@@ -58,6 +58,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.layout.Column
 import androidx.compose.material3.TextButton
+import kotlin.math.abs
 
 
 fun updateUserTripStats(tripScore: Float) {
@@ -84,29 +85,25 @@ fun updateUserTripStats(tripScore: Float) {
 }
 
 private fun sendTripNotification(ctx: Context, trip: TripRecord) {
-    // ⬇️  adaugă IMEDIAT după începutul funcţiei
     val prefs = ctx.getSharedPreferences("settings", Context.MODE_PRIVATE)
     if (!prefs.getBoolean("notifications_enabled", true)) return
     val chanId = "trip_channel"
     val nm = NotificationManagerCompat.from(ctx)
 
-    // Creează canalul (prima dată)
     if (Build.VERSION.SDK_INT >= 26 &&
         nm.getNotificationChannel(chanId) == null) {
         nm.createNotificationChannel(
             NotificationChannel(
                 chanId,
-                "Trip finished",
+                "Cursă finalizată",
                 NotificationManager.IMPORTANCE_DEFAULT
             )
         )
     }
 
-    // Dacă pe Android 13+ nu avem permisiune → ieșim
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
         ContextCompat.checkSelfPermission(ctx, Manifest.permission.POST_NOTIFICATIONS)
         != PackageManager.PERMISSION_GRANTED) {
-        // poți lansa request în UI, de ex. notifPermLauncher.launch(...)
         return
     }
 
@@ -120,7 +117,7 @@ private fun sendTripNotification(ctx: Context, trip: TripRecord) {
     }
 
     val notif = NotificationCompat.Builder(ctx, chanId)
-        .setSmallIcon(R.drawable.car_trip)     // pune orice icon ai deja
+        .setSmallIcon(R.drawable.car_trip)
         .setContentTitle("Călătorie salvată")
         .setContentText(msg)
         .setStyle(NotificationCompat.BigTextStyle().bigText(msg))
@@ -241,13 +238,11 @@ fun saveTripToFirestoreTopLevel(trip: TripRecord) {
     )
     Firebase.firestore
         .collection("trips")
-        .document(trip.id.toString())  // <- Folosim id-ul explicit
+        .document(trip.id.toString())
         .set(data)
         .addOnSuccessListener {
-            // Trip salvat cu succes
         }
         .addOnFailureListener { e ->
-            // Eroare la salvare
         }
 }
 
@@ -280,7 +275,7 @@ fun loadLast10TripsFromFirestoreTopLevel(onLoaded: (List<TripRecord>) -> Unit) {
         .addOnSuccessListener { querySnapshot ->
             val list = mutableListOf<TripRecord>()
             for (doc in querySnapshot.documents) {
-                val id = doc.getLong("tripId") ?: continue // <--- CORECT
+                val id = doc.getLong("tripId") ?: continue
                 val start = doc.getLong("startTimeMs") ?: continue
                 val end = doc.getLong("endTimeMs") ?: continue
                 val dist = doc.getDouble("distanceMeters")?.toFloat() ?: continue
@@ -324,11 +319,8 @@ fun MapPage(
     ) {  }
 
     val context = LocalContext.current
-
-
     val apiKey = context.getString(R.string.google_api_key)
 
-    // 1) Inițializează Google Places API (o singură dată)
     LaunchedEffect(Unit) {
         if (!Places.isInitialized()) {
             Places.initialize(context, apiKey)
@@ -336,31 +328,25 @@ fun MapPage(
     }
     val placesClient = remember { Places.createClient(context) }
 
-    // 2) Starea camerei și a locației curente
     val cameraPositionState = rememberCameraPositionState()
     var currentLocation by remember { mutableStateOf<LatLng?>(null) }
 
-    // 3) Viteză & status & pauze ≤ 5 min
     var currentSpeedKmh by remember { mutableStateOf(0f) }
-    var status by remember { mutableStateOf("No Move") }
+    var status by remember { mutableStateOf("Fără Mișcare") }
     var statusEmoji by remember { mutableStateOf("🛑") }
     var stopStartTimestamp by remember { mutableStateOf<Long?>(null) }
     var lastDriveTimestamp by remember { mutableStateOf<Long?>(null) }
 
-    // 4) Search / Autocomplete state
     var query by remember { mutableStateOf("") }
     var predictions by remember { mutableStateOf<List<AutocompletePrediction>>(emptyList()) }
 
-    // 5) Pin roșu destinație + dialoguri + salvare favorite
     var selectedLocation by remember { mutableStateOf<LatLng?>(null) }
     var showNavigateDialog by remember { mutableStateOf(false) }
     var showNameDialog by remember { mutableStateOf(false) }
     var favoriteName by remember { mutableStateOf("") }
 
-    // FLAG: dacă marker-ul curent este un favorit
     var isFavoriteSelected by remember { mutableStateOf(false) }
 
-    // 6) My Last 10 Trips (din Firestore)
     val tripsList = remember { mutableStateListOf<TripRecord>() }
     var showTripsDialog by remember { mutableStateOf(false) }
 
@@ -369,7 +355,6 @@ fun MapPage(
     var tripMaxSpeedKmh by remember { mutableStateOf(0f) }
     val tripPath = remember { mutableStateListOf<LatLng>() }
 
-    // Noi stări pentru contorizare frânări/accelerări bruște
     var prevSpeedKmh by remember { mutableStateOf<Float?>(null) }
     var hardBrakes by remember { mutableStateOf(0) }
     var hardAccelerations by remember { mutableStateOf(0) }
@@ -381,8 +366,6 @@ fun MapPage(
     val tripsDialogMaxHeight = 380.dp
     var showFullMapDialog by remember { mutableStateOf(false) }
 
-
-    // Încarcă ultimele 10 tripuri la lansare:
     LaunchedEffect(Unit) {
         loadLast10TripsFromFirestoreTopLevel { loaded ->
             tripsList.clear()
@@ -390,13 +373,11 @@ fun MapPage(
         }
     }
 
-    // 7) Favorites list + dialog de vizualizare + ștergere
     val favoritesList = remember { mutableStateListOf<Favorite>() }
     var showFavoritesDialog by remember { mutableStateOf(false) }
     var favoriteToDelete by remember { mutableStateOf<Favorite?>(null) }
     var showDeleteConfirmDialog by remember { mutableStateOf(false) }
 
-    // ─── Logica autocomplete (exact cum era inițial) ───
     LaunchedEffect(query) {
         if (query.isNotBlank()) {
             val request = FindAutocompletePredictionsRequest.builder()
@@ -420,7 +401,6 @@ fun MapPage(
     val backgroundColor = if (isDark) Color(0xFF1E1E1E) else Color.White
     val textColor = if (isDark) Color.White else Color.Black
 
-    // ==== Cerem permisiunea și pornim GPS-ul ====
     RequestLocationPermission {
         val prefs = context.getSharedPreferences("settings", Context.MODE_PRIVATE)
         if (!prefs.getBoolean("location_tracking_enabled", true)) {
@@ -429,7 +409,7 @@ fun MapPage(
         }
 
         startLocationUpdates(context) { lat, lng, speedKmh, timestamp ->
-        val newLatLng = LatLng(lat, lng)
+            val newLatLng = LatLng(lat, lng)
             if (tripStartTimestamp != null) {
                 tripPath.add(newLatLng)
             }
@@ -437,9 +417,8 @@ fun MapPage(
             cameraPositionState.position = CameraPosition.fromLatLngZoom(newLatLng, 15f)
             currentSpeedKmh = speedKmh
 
-            // Logică stare + accelerări/frânări bruște
-            if (speedKmh >= 10f) {
-                lastDriveTimestamp = timestamp
+            if (speedKmh >= 10f && prevSpeedKmh != null && abs(speedKmh - prevSpeedKmh!!) > 3f){
+            lastDriveTimestamp = timestamp
                 stopStartTimestamp = null
                 status = "Drive"
                 statusEmoji = "🚗"
@@ -451,7 +430,7 @@ fun MapPage(
                     hardBrakes = 0
                     hardAccelerations = 0
                 } else {
-                    tripDistanceMeters += 5f // simulare distanță
+                    tripDistanceMeters += 5f
                     if (speedKmh > tripMaxSpeedKmh) tripMaxSpeedKmh = speedKmh
 
                     prevSpeedKmh?.let { prev ->
@@ -471,13 +450,13 @@ fun MapPage(
 
                 val elapsed = now - stopStartTimestamp!!
                 if (elapsed >= 5 * 60 * 1000) {
-                    status = "Walking"
+                    status = "Mers pe jos"
                     statusEmoji = "🚶"
                 } else if (lastDriveTimestamp != null) {
-                    status = "Drive"
+                    status = "Condus"
                     statusEmoji = "🚗"
                 } else {
-                    status = "No Move"
+                    status = "Nicio Mișcare"
                     statusEmoji = "🛑"
                 }
             }
@@ -495,7 +474,6 @@ fun MapPage(
                 .padding(16.dp)
                 .background(backgroundColor)
         ){
-        // — 1️⃣ Search bar + sugestii
         Column {
             OutlinedTextField(
                 value = query,
@@ -503,7 +481,7 @@ fun MapPage(
                     query = it
                     isFavoriteSelected = false
                 },
-                label = { Text("Search location", color= textColor) },
+                label = { Text("Caută o locație", color= textColor) },
                 modifier = Modifier.fillMaxWidth()
             )
             predictions.forEach { prediction ->
@@ -535,7 +513,6 @@ fun MapPage(
 
         Spacer(modifier = Modifier.height(8.dp))
 
-        // — 2️⃣ HARTĂ + Markere + 2 FAB-uri
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -553,18 +530,16 @@ fun MapPage(
                     isFavoriteSelected = false
                 }
             ) {
-                // Marker pentru locația curentă (icon_car_loc)
                 currentLocation?.let { loc ->
                     val iconCurrent =
                         bitmapDescriptorFromVector(context, R.drawable.icon_car_loc)
                     Marker(
                         state = MarkerState(position = loc),
-                        title = "Your Location",
+                        title = "Locația ta",
                         icon = iconCurrent
                     )
                 }
 
-                // Marker roșu sau fav_pin pentru destinație
                 selectedLocation?.let { dest ->
                     val iconRes = if (isFavoriteSelected) {
                         R.drawable.fav_loc
@@ -574,7 +549,7 @@ fun MapPage(
                     val iconDest = bitmapDescriptorFromVector(context, iconRes)
                     Marker(
                         state = MarkerState(position = dest),
-                        title = "Destination",
+                        title = "Destinație",
                         icon = iconDest,
                         onClick = {
                             showNavigateDialog = true
@@ -592,7 +567,6 @@ fun MapPage(
 
             }
 
-            // Buton “View Trips” (FAB stânga-jos)
             FloatingActionButton(
                 onClick = { showTripsDialog = true },
                 containerColor = MaterialTheme.colorScheme.primary,
@@ -603,19 +577,18 @@ fun MapPage(
             ) {
                 Icon(
                     painter = painterResource(id = R.drawable.car_icon),
-                    contentDescription = "View Trips",
+                    contentDescription = "Vizualizează cursele",
                     tint = Color.White
                 )
             }
 
-            // Buton “View Favorites” (FAB dreapta-jos)
             FloatingActionButton(
                 onClick = {
                     val uid = Firebase.auth.currentUser?.uid
                     if (uid == null) {
                         Toast.makeText(
                             context,
-                            "Please log in to see favorites",
+                            "Te rog să te conectezi pentru a vedea locațiile favorite",
                             Toast.LENGTH_SHORT
                         ).show()
                     } else {
@@ -643,7 +616,7 @@ fun MapPage(
                             .addOnFailureListener {
                                 Toast.makeText(
                                     context,
-                                    "Error loading favorites.",
+                                    "Eroare la încărcarea locațiilor favorite.",
                                     Toast.LENGTH_SHORT
                                 ).show()
                             }
@@ -657,14 +630,13 @@ fun MapPage(
             ) {
                 Icon(
                     painter = painterResource(id = R.drawable.fav_loc1),
-                    contentDescription = "View Favorites"
+                    contentDescription = "Vizualizare locații favorite"
                 )
             }
         }
 
         Spacer(modifier = Modifier.height(8.dp))
 
-        // — 3️⃣ Buton “Add to Favorites” (sub hartă)
         selectedLocation?.let {
             Button(
                 onClick = { showNameDialog = true },
@@ -677,12 +649,11 @@ fun MapPage(
                 )
             )
             {
-                Text("Add to Favorites")
+                Text("Adaugă la favorite")
 
             }
         }
 
-        // — 4️⃣ STATUS + EMOJI + VITEZĂ
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -697,8 +668,13 @@ fun MapPage(
                     color = textColor
                 )
                 Spacer(modifier = Modifier.width(16.dp))
+                val displayedSpeed = when (status) {
+                    "Condus", "Mers pe jos" -> currentSpeedKmh
+                    else -> 0f
+                }
+
                 Text(
-                    text = String.format("%.0f km/h", currentSpeedKmh),
+                    text = String.format("%.0f km/h", displayedSpeed),
                     style = MaterialTheme.typography.bodyLarge,
                     color = textColor
                 )
@@ -728,11 +704,10 @@ fun MapPage(
                             saveTripToFirestoreTopLevel(trip)
                             saveTripPathToFirestore(trip.id, tripPath.toList())
                             sendTripNotification(context, trip)
-                            //refreshUserStatsFromTrips(userId)
-                            updateUserTripStats(score) // 🟡 Actualizăm scorul total și trip count
-                            Toast.makeText(context, "Trip saved manually", Toast.LENGTH_SHORT).show()
+                            updateUserTripStats(score)
+                            Toast.makeText(context, "Cursă salvată manual", Toast.LENGTH_SHORT).show()
                         } else {
-                            Toast.makeText(context, "Trip too short to save", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(context, "Cursa este prea scurtă ca sa fie salvată", Toast.LENGTH_SHORT).show()
                         }
                         tripStartTimestamp = null
                         tripDistanceMeters = 0f
@@ -746,11 +721,10 @@ fun MapPage(
                         .fillMaxWidth()
                         .padding(top = 12.dp)
                 ) {
-                    Text("Save Trip", color = textColor)
+                    Text("Salvează Cursa", color = textColor)
                 }
             }
 
-            // — 5️⃣ Bara de navigare jos (Home, Map, Garage, Settings)
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -764,7 +738,7 @@ fun MapPage(
                     tint = Color.LightGray
                 )
             }
-            IconButton(onClick = { /* deja suntem pe hartă */ }, modifier = Modifier.size(50.dp)) {
+            IconButton(onClick = { }, modifier = Modifier.size(50.dp)) {
                 Icon(
                     painter = painterResource(R.drawable.map),
                     contentDescription = "Map",
@@ -789,12 +763,11 @@ fun MapPage(
             }
     }
 
-    // ─────────────── Dialog: “Nume Favorite” ───────────────
     if (showNameDialog) {
         AlertDialog(
             onDismissRequest = { showNameDialog = false },
             containerColor = backgroundColor,
-            title = { Text("Enter Favorite Name", color=textColor) },
+            title = { Text("Adaugă numele locației favorite", color=textColor) },
             text = {
                 OutlinedTextField(
                     value = favoriteName,
@@ -809,13 +782,13 @@ fun MapPage(
                     if (uid == null) {
                         Toast.makeText(
                             context,
-                            "You must be logged in",
+                            "Trebuie să fi conectat",
                             Toast.LENGTH_SHORT
                         ).show()
                     } else if (favoriteName.isBlank()) {
                         Toast.makeText(
                             context,
-                            "Name cannot be empty",
+                            "Numele nu poate fi gol",
                             Toast.LENGTH_SHORT
                         ).show()
                     } else {
@@ -832,14 +805,14 @@ fun MapPage(
                             .addOnSuccessListener {
                                 Toast.makeText(
                                     context,
-                                    "Saved to Favorites!",
+                                    "Salvat la favorite!",
                                     Toast.LENGTH_SHORT
                                 ).show()
                             }
                             .addOnFailureListener {
                                 Toast.makeText(
                                     context,
-                                    "Error saving favorite",
+                                    "Eroare în salvarea la favorite",
                                     Toast.LENGTH_SHORT
                                 ).show()
                             }
@@ -847,7 +820,7 @@ fun MapPage(
                     favoriteName = ""
                     showNameDialog = false
                 }) {
-                    Text("Save")
+                    Text("Salvare")
                 }
             },
             dismissButton = {
@@ -855,13 +828,12 @@ fun MapPage(
                     favoriteName = ""
                     showNameDialog = false
                 }) {
-                    Text("Cancel")
+                    Text("Anulare")
                 }
             }
         )
     }
 
-    // ─────────────── Dialog: “Navigate” ───────────────
     if (showNavigateDialog && selectedLocation != null) {
         AlertDialog(
             onDismissRequest = { showNavigateDialog = false },
@@ -888,19 +860,18 @@ fun MapPage(
                     }
                     showNavigateDialog = false
                 }) {
-                    Text(text = "Navigate în Google Maps", color = textColor)
+                    Text(text = "Navigare în Google Maps", color = textColor)
                 }
             },
             dismissButton = {
                 TextButton(onClick = { showNavigateDialog = false }) {
-                    Text("Cancel")
+                    Text("Anulare")
                 }
             },
             title = { Text("Navigare către destinație", color=textColor) },
             text = { Text("Se deschide Google Maps pentru direcții către destinație.") }
         )
     }
-        /* ─────────────────────────  DIALOG „My Last 10 Trips”  ───────────────────────── */
         if (showTripsDialog) {
             AlertDialog(
                 onDismissRequest = { showTripsDialog = false },
@@ -908,12 +879,11 @@ fun MapPage(
                 confirmButton = {
                     TextButton(onClick = { showTripsDialog = false }) { Text("Close") }
                 },
-                title = { Text("My Last 10 Trips", color = textColor) },
+                title = { Text("Ultimele 10 curse ale mele", color = textColor) },
                 text  = {
                     if (tripsList.isEmpty()) {
-                        Text("No trips yet.", color = textColor)
+                        Text("Nicio cursă salvată", color = textColor)
                     } else {
-                        /* listă scroll-abilă */
                         LazyColumn(
                             state  = rememberLazyListState(),
                             modifier = Modifier
@@ -924,7 +894,6 @@ fun MapPage(
 
                             itemsIndexed(tripsList, key = { _, t -> t.id }) { index, trip ->
 
-                                /* 0️⃣ ─ dacă path-ul nu este deja în cache îl încărcăm o dată */
                                 val miniMapPath = tripPathCache[trip.id] ?: emptyList()
                                 LaunchedEffect(miniMapPath.isEmpty()) {
                                     if (miniMapPath.isEmpty()) {
@@ -934,13 +903,12 @@ fun MapPage(
                                     }
                                 }
 
-                                /* 1️⃣ ─ Card colorat alternativ */
                                 Card(
                                     colors = CardDefaults.cardColors(
                                         containerColor = if (index % 2 == 0)
-                                            Color(0xFFBBDEFB)            // bleu
+                                            Color(0xFFBBDEFB)
                                         else
-                                            Color(0xFFC8E6C9)            // verde deschis
+                                            Color(0xFFC8E6C9)
                                     ),
                                     modifier = Modifier.fillMaxWidth()
                                 ) {
@@ -952,10 +920,9 @@ fun MapPage(
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
 
-                                        /* ——— TEXT ——— */
                                         Column(Modifier.weight(1f)) {
                                             Text(
-                                                "Trip ${index + 1}",
+                                                "Cursa ${index+1}",
                                                 fontWeight = FontWeight.Bold,
                                                 color      = Color.Black
                                             )
@@ -973,9 +940,8 @@ fun MapPage(
 
                                         Column(
                                             horizontalAlignment = Alignment.CenterHorizontally,
-                                            modifier = Modifier.width(90.dp)           // lățime fixă
+                                            modifier = Modifier.width(90.dp)
                                         ) {
-                                            // ─ Mini-harta propriu-zisă
                                             Box(
                                                 modifier = Modifier
                                                     .size(90.dp)
@@ -999,7 +965,6 @@ fun MapPage(
                                                             width  = 4f
                                                         )
 
-                                                        // START 🟢
                                                         Marker(
                                                             state = MarkerState(miniMapPath.first()),
                                                             title = "Start",
@@ -1007,16 +972,15 @@ fun MapPage(
                                                                 BitmapDescriptorFactory.HUE_GREEN
                                                             )
                                                         )
-                                                        // END 🔴
+
                                                         Marker(
                                                             state = MarkerState(miniMapPath.last()),
-                                                            title = "End",
+                                                            title = "Sfârșit",
                                                             icon  = BitmapDescriptorFactory.defaultMarker(
                                                                 BitmapDescriptorFactory.HUE_RED
                                                             )
                                                         )
 
-                                                        // centrează camera
                                                         LaunchedEffect(Unit) {
                                                             val b = LatLngBounds.builder().apply {
                                                                 miniMapPath.forEach { include(it) }
@@ -1027,10 +991,9 @@ fun MapPage(
                                                 }
                                             }
 
-                                            // ─ Butonul „Full Map” (TextButton mic)
                                             TextButton(
                                                 onClick = {
-                                                    selectedTripPath.clear()            // curățăm selecția anterioară
+                                                    selectedTripPath.clear()
                                                     val cached = tripPathCache[trip.id]
                                                     if (!cached.isNullOrEmpty()) {
                                                         selectedTripPath.addAll(cached)
@@ -1044,10 +1007,10 @@ fun MapPage(
                                                         }
                                                     }
                                                 },
-                                                contentPadding = PaddingValues(0.dp),   // text mic, fără margini
+                                                contentPadding = PaddingValues(0.dp),
                                                 modifier       = Modifier.fillMaxWidth()
                                             ) {
-                                                Text("Full Map", fontSize = 12.sp, color = Color.Black)
+                                                Text(" Harta mare", fontSize = 12.sp, color = Color.Black)
                                             }
                                         }
 
@@ -1067,10 +1030,10 @@ fun MapPage(
                 onDismissRequest = { showFullMapDialog = false },
                 confirmButton = {
                     TextButton(onClick = { showFullMapDialog = false }) {
-                        Text("Close")
+                        Text("Închide")
                     }
                 },
-                title = { Text("Full Trip View") },
+                title = { Text("Vizualizare cursă întreagă") },
                 text = {
                     if (selectedTripPath.isEmpty()) {
                         Box(
@@ -1084,7 +1047,7 @@ fun MapPage(
                     } else {
                         Box(
                             modifier = Modifier
-                                .fillMaxSize()  // full screen map
+                                .fillMaxSize()
                         ) {
                             val bigCam = rememberCameraPositionState()
                             GoogleMap(
@@ -1098,7 +1061,6 @@ fun MapPage(
                                     width = 6f
                                 )
 
-                                // Marker START 🟢
                                 Marker(
                                     state = MarkerState(selectedTripPath.first()),
                                     title = "Start",
@@ -1106,10 +1068,9 @@ fun MapPage(
                                         BitmapDescriptorFactory.HUE_GREEN
                                     )
                                 )
-                                // Marker END 🔴
                                 Marker(
                                     state = MarkerState(selectedTripPath.last()),
-                                    title = "End",
+                                    title = "Sfârșit",
                                     icon = BitmapDescriptorFactory.defaultMarker(
                                         BitmapDescriptorFactory.HUE_RED
                                     )
@@ -1130,16 +1091,15 @@ fun MapPage(
             )
         }
 
-        // ─────────── Dialog: “View Favorites” ───────────
     if (showFavoritesDialog) {
         AlertDialog(
             onDismissRequest = { showFavoritesDialog = false },
             containerColor = backgroundColor,
-            title = { Text("Your Favorites", color=textColor) },
+            title = { Text("Favoritele tale", color=textColor) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     if (favoritesList.isEmpty()) {
-                        Text(text = "No favorites yet.")
+                        Text(text = "Nu sunt favorite încă.")
                     } else {
                         favoritesList.forEach { fav ->
                             Row(
@@ -1148,7 +1108,6 @@ fun MapPage(
                                     .padding(vertical = 4.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                // 1) Clic pe nume => centrăm harta și punem fav_pin
                                 Text(
                                     text = fav.name,
                                     modifier = Modifier
@@ -1162,14 +1121,13 @@ fun MapPage(
                                             showFavoritesDialog = false
                                         }
                                 )
-                                // 2) Iconiță “X” pentru ștergere
                                 IconButton(onClick = {
                                     favoriteToDelete = fav
                                     showDeleteConfirmDialog = true
                                 }) {
                                     Icon(
                                         imageVector = Icons.Default.Close,
-                                        contentDescription = "Delete",
+                                        contentDescription = "Șterge",
                                         tint = Color.Red
                                     )
                                 }
@@ -1180,18 +1138,17 @@ fun MapPage(
             },
             confirmButton = {
                 TextButton(onClick = { showFavoritesDialog = false }) {
-                    Text("Close")
+                    Text("Închide")
                 }
             }
         )
     }
 
-    // ─────────── Dialog: Confirmare ștergere favorite ───────────
     if (showDeleteConfirmDialog && favoriteToDelete != null) {
         AlertDialog(
             onDismissRequest = { showDeleteConfirmDialog = false },
-            title = { Text("Remove Favorite", color=textColor) },
-            text = { Text("Do you want to remove \"${favoriteToDelete!!.name}\"?") },
+            title = { Text("Șterge Favorite", color=textColor) },
+            text = { Text("Ești sigur că vrei să ștergi \"${favoriteToDelete!!.name}\"?") },
             containerColor = backgroundColor,
             confirmButton = {
                 TextButton(onClick = {
@@ -1203,21 +1160,21 @@ fun MapPage(
                             favoritesList.remove(favoriteToDelete!!)
                             Toast.makeText(
                                 context,
-                                "Favorite removed",
+                                "Favorită ștearsă",
                                 Toast.LENGTH_SHORT
                             ).show()
                         }
                         .addOnFailureListener {
                             Toast.makeText(
                                 context,
-                                "Error removing favorite",
+                                "Eroare la ștergerea favoritei",
                                 Toast.LENGTH_SHORT
                             ).show()
                         }
                     favoriteToDelete = null
                     showDeleteConfirmDialog = false
                 }) {
-                    Text("Yes")
+                    Text("Da")
                 }
             },
             dismissButton = {
@@ -1225,7 +1182,7 @@ fun MapPage(
                     favoriteToDelete = null
                     showDeleteConfirmDialog = false
                 }) {
-                    Text("No")
+                    Text("Nu")
                 }
             }
         )
@@ -1233,7 +1190,6 @@ fun MapPage(
 }
 }
 
-/* ------------------------------ Request Location Permission ------------------------------ */
 @Composable
 fun RequestLocationPermission(onPermissionGranted: () -> Unit) {
     val context = LocalContext.current
@@ -1244,7 +1200,7 @@ fun RequestLocationPermission(onPermissionGranted: () -> Unit) {
             } else {
                 Toast.makeText(
                     context,
-                    "Location permission is required",
+                    "Permisiunile pentru locație sunt necesare",
                     Toast.LENGTH_LONG
                 ).show()
             }

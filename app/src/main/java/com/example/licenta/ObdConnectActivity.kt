@@ -27,7 +27,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.Dispatchers
@@ -54,15 +53,12 @@ class ObdConnectActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // 1. Inițializează BluetoothAdapter
         bluetoothAdapter = BluetoothAdapter.getDefaultAdapter()
         if (bluetoothAdapter == null) {
-            // Dacă nu există Bluetooth pe dispozitiv, putem să închidem activitatea
             finish()
             return
         }
 
-        // 2. UI Compose
         setContent {
             MaterialTheme {
                 Surface(modifier = Modifier.fillMaxSize()) {
@@ -79,27 +75,20 @@ class ObdConnectActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
-        // Închide stream-urile și socket-ul
         try {
             mmInStream?.close()
             mmOutStream?.close()
             mmSocket?.close()
         } catch (e: IOException) {
-            // ignorăm
         }
     }
 
-    /**
-     * Funcție care face conexiunea Bluetooth + OBD pe un thread de fundal.
-     * Parametrul onStatusUpdate este o lambda care actualizează text-ul de status din UI Compose.
-     */
     @SuppressLint("MissingPermission")
     private fun connectToDevice(
         device: BluetoothDevice,
         onStatusUpdate: (String) -> Unit
     ) {
         onStatusUpdate("Conectare la ${device.name}...")
-        // Folosim CoroutineScope (Main) pentru a lansa în IO
         val scope = lifecycleScope
         scope.launch {
             withContext(Dispatchers.IO) {
@@ -112,11 +101,9 @@ class ObdConnectActivity : AppCompatActivity() {
                     mmOutStream = mmSocket?.outputStream
                     mmInStream = mmSocket?.inputStream
 
-                    // Trimitem comanda OBD 010C pentru RPM
                     val rpmCommand = "010C\r"
                     mmOutStream?.write(rpmCommand.toByteArray())
 
-                    // Citim răspunsul
                     val buffer = ByteArray(1024)
                     val bytesRead = mmInStream?.read(buffer) ?: 0
                     val rawResponse = String(buffer, 0, bytesRead).trim()
@@ -135,13 +122,6 @@ class ObdConnectActivity : AppCompatActivity() {
     }
 }
 
-/**
- * Composable-ul principal pentru ecranul de conectare OBD.
- * - Afișează un buton pentru a lista dispozitivele împerecheate
- * - Afișează lista într-un LazyColumn
- * - Când apeși pe un item, apelează onConnect(device, onStatusUpdate)
- * - Afișează statusul curent într-un Text
- */
 @Composable
 fun ObdConnectScreen(
     bluetoothAdapter: BluetoothAdapter,
@@ -149,11 +129,9 @@ fun ObdConnectScreen(
 ) {
     val context = LocalContext.current
 
-    // Ținem starea listei de dispozitive și a statusului
     var deviceList by remember { mutableStateOf(listOf<BluetoothDevice>()) }
     var statusText by remember { mutableStateOf("Apasă butonul de mai sus") }
 
-    // Pentru permisiunea LOCATION necesară la scanarea Bluetooth
     val locationPermission = Manifest.permission.ACCESS_FINE_LOCATION
     val permissionGranted = remember {
         mutableStateOf(
@@ -165,7 +143,6 @@ fun ObdConnectScreen(
         onResult = { granted ->
             permissionGranted.value = granted
             if (granted) {
-                // După ce e permisia acordată, populăm lista de device-uri împerecheate
                 val paired = bluetoothAdapter.bondedDevices.toList()
                 deviceList = paired
                 if (paired.isEmpty()) {
@@ -184,7 +161,6 @@ fun ObdConnectScreen(
             .fillMaxSize()
             .padding(16.dp)
     ) {
-        // Buton care cere permisiunea și listează dispozitivele împerecheate
         Button(
             onClick = {
                 if (!permissionGranted.value) {
@@ -206,7 +182,6 @@ fun ObdConnectScreen(
 
         Spacer(modifier = Modifier.height(16.dp))
 
-        // LazyColumn pentru lista de device-uri Bluetooth
         LazyColumn(
             modifier = Modifier
                 .weight(1f)
@@ -228,7 +203,6 @@ fun ObdConnectScreen(
 
         Spacer(modifier = Modifier.height(16.dp))
 
-        // Textarea pentru statusul conexiunii / răspunsul OBD
         Text(
             text = statusText,
             modifier = Modifier

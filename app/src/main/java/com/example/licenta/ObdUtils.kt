@@ -28,7 +28,7 @@ fun ObdDataDialog(
         try {
             outputStream.write((command + "\r").toByteArray())
             outputStream.flush()
-            delay(200) // așteaptă răspunsul
+            delay(200)
             val buffer = ByteArray(1024)
             val bytes = inputStream.read(buffer)
             return String(buffer, 0, bytes).replace("\r", "").replace("\n", "").trim()
@@ -38,7 +38,6 @@ fun ObdDataDialog(
     }
 
     suspend fun parseRpm(response: String): String {
-        // Ex: răspuns: 41 0C 1A F8 => ((1A * 256) + F8) / 4 = RPM
         val bytes = response.split(" ")
         return if (bytes.size >= 4) {
             val a = bytes[2].toInt(16)
@@ -49,7 +48,6 @@ fun ObdDataDialog(
     }
 
     suspend fun parseSpeed(response: String): String {
-        // Ex: răspuns: 41 0D 3C => 60 km/h
         val bytes = response.split(" ")
         return if (bytes.size >= 3) {
             val value = bytes[2].toInt(16)
@@ -58,7 +56,6 @@ fun ObdDataDialog(
     }
 
     suspend fun parseFuel(response: String): String {
-        // Ex: răspuns: 41 5E 12 => Fuel consumption rate (simplificat)
         val bytes = response.split(" ")
         return if (bytes.size >= 3) {
             val value = bytes[2].toInt(16)
@@ -70,14 +67,13 @@ fun ObdDataDialog(
         val inputStream = socket.inputStream
         val outputStream = socket.outputStream
 
-        // Trimite comenzile de inițializare o singură dată
-        sendCommand("ATZ", inputStream, outputStream)  // Reset
+        sendCommand("ATZ", inputStream, outputStream)
         delay(1000)
-        sendCommand("ATE0", inputStream, outputStream) // Echo off
-        sendCommand("ATL0", inputStream, outputStream) // Linefeeds off
-        sendCommand("ATS0", inputStream, outputStream) // Spaces off
-        sendCommand("ATH0", inputStream, outputStream) // Headers off
-        sendCommand("ATSP0", inputStream, outputStream) // Protocol auto
+        sendCommand("ATE0", inputStream, outputStream)
+        sendCommand("ATL0", inputStream, outputStream)
+        sendCommand("ATS0", inputStream, outputStream)
+        sendCommand("ATH0", inputStream, outputStream)
+        sendCommand("ATSP0", inputStream, outputStream)
 
         while (bluetoothManager.isConnected()) {
             val rpmResp = sendCommand("010C", inputStream, outputStream)

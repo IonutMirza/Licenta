@@ -1,7 +1,6 @@
 package com.example.licenta
 
 import android.content.Context
-import android.content.SharedPreferences
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -27,11 +26,12 @@ import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.FirebaseUser
 import java.io.File
 import android.net.Uri
-import com.example.licenta.utils.refreshAllUserStats
-import com.example.licenta.utils.refreshUserStatsFromTrips
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import com.google.firebase.firestore.ktx.firestore
 import com.google.firebase.ktx.Firebase
-import android.util.Log
+
+
 
 private fun emailToUsername(email: String?): String {
     return email?.substringBefore("@") ?: "-"
@@ -53,19 +53,18 @@ fun fetchUserStats(
             onStatsLoaded(tripCount, avgScore)
         }
         .addOnFailureListener {
-            Toast.makeText(context, "Failed to load user stats", Toast.LENGTH_SHORT).show()
+            Toast.makeText(context, "Eroare la afisearea statisticilor user-ului", Toast.LENGTH_SHORT).show()
             onStatsLoaded(0, 0.0)
         }
 }
 
 fun disableAllAppNotifications(ctx: Context) {
-    // 1) Anulează orice WorkManager cu tag-ul nostru
     androidx.work.WorkManager.getInstance(ctx)
         .cancelAllWorkByTag("app_notification")
 
-    // 2) Şterge notificările deja afişate
     androidx.core.app.NotificationManagerCompat.from(ctx).cancelAll()
 }
+
 
 @Composable
 fun SettingsPage(
@@ -74,346 +73,259 @@ fun SettingsPage(
     onNavigateToMapPage: () -> Unit,
     onLogoutNavigateToSignUp: () -> Unit
 ) {
-    val context = LocalContext.current
-    val user = FirebaseAuth.getInstance().currentUser
-    val prefs: SharedPreferences = context.getSharedPreferences("settings", Context.MODE_PRIVATE)
+    val ctx   = LocalContext.current
+    val user  = FirebaseAuth.getInstance().currentUser
+    val prefs = ctx.getSharedPreferences("settings", Context.MODE_PRIVATE)
 
-    var notificationsEnabled by remember {
-        mutableStateOf(prefs.getBoolean("notifications_enabled", true))
-    }
+    var notificationsEnabled   by remember { mutableStateOf(prefs.getBoolean("notifications_enabled", true)) }
+    var darkModeEnabled        by rememberSaveable { mutableStateOf(prefs.getBoolean("dark_mode", false)) }
+    var locationTrackingEnabled by remember { mutableStateOf(prefs.getBoolean("location_tracking_enabled", true)) }
 
-    var darkModeEnabled by rememberSaveable {
-        mutableStateOf(prefs.getBoolean("dark_mode", false))
-    }
-    var locationTrackingEnabled by remember {
-        mutableStateOf(prefs.getBoolean("location_tracking_enabled", true))
-    }
+    var showPwdDialog  by remember { mutableStateOf(false) }
+    var showInfoDialog by remember { mutableStateOf(false) }
+    var showLbDialog   by remember { mutableStateOf(false) }
 
-    var showPasswordDialog by remember { mutableStateOf(false) }
-    var showScoreDialog by remember { mutableStateOf(false) }
+    var tripCount by remember { mutableStateOf(0L) }
+    var avgScore  by remember { mutableStateOf(0.0) }
+    var infoLoaded by remember { mutableStateOf(false) }
 
-    val isDark = darkModeEnabled
-    val backgroundColor = if (isDark) Color(0xFF1E1E1E) else Color.White
-    val textColor = if (isDark) Color.White else Color.Black
-    var totalTrips by remember { mutableStateOf(0L) }
-    var avgScore by remember { mutableStateOf(0.0) }
-    var isLeaderboardLoading by remember { mutableStateOf(false) }   // ↙ flag de „loading”
-    var isScoreLoading by remember { mutableStateOf(false) }
-
-
-
+    data class RankRow(val uid: String, val avg: Double, val trips: Long, val username: String)
+    val leaderboard = remember { mutableStateListOf<RankRow>() }
+    var lbLoaded by remember { mutableStateOf(false) }
 
     LaunchedEffect(user?.uid) {
         user?.uid?.let { uid ->
-            refreshUserStatsFromTrips(uid) {           // ⇢ generează / actualizează doc-ul
-                Firebase.firestore                      //    „user-stats/<uid>”
-                    .collection("user-stats")
-                    .document(uid)
-                    .addSnapshotListener { doc, _ ->
-                        if (doc != null && doc.exists()) {
-                            val trips = doc.getLong("tripCount") ?: 0L
-                            val total = doc.getDouble("totalScore") ?: 0.0
-                            totalTrips = trips
-                            avgScore   = if (trips > 0) total / trips else 0.0
-                        }
-                    }
+            Firebase.firestore.collection("user-stats").document(uid).get()
+                .addOnSuccessListener { doc ->
+                    tripCount = doc.getLong("tripCount") ?: 0
+                    val total = doc.getDouble("totalScore") ?: 0.0
+                    avgScore  = if (tripCount > 0) total / tripCount else 0.0
+                    infoLoaded = true
+                }
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        val db = Firebase.firestore
+        db.collection("user-stats").get().addOnSuccessListener { snap ->
+            val rows = snap.documents.mapNotNull { d ->
+                val trips = d.getLong("tripCount") ?: return@mapNotNull null
+                if (trips == 0L) return@mapNotNull null
+                val total = d.getDouble("totalScore") ?: 0.0
+                RankRow(d.id, total / trips, trips, "")
+            }
+            db.collection("users").get().addOnSuccessListener { usnap ->
+                val emailMap = usnap.associate { it.id to (it.getString("email")?.substringBefore("@") ?: "User") }
+                leaderboard.clear()
+                leaderboard.addAll(
+                    rows.map { it.copy(username = emailMap[it.uid] ?: "-") }
+                        .sortedWith(
+                            compareByDescending<RankRow> { it.avg }
+                                .thenByDescending { it.trips }
+                                .thenBy { it.username.lowercase() }
+                        )
+                )
+                lbLoaded = true
             }
         }
     }
 
-    var showLeaderboardDialog by remember { mutableStateOf(false) }
-    data class RankRow(
-        val uid: String,
-        val avg: Double,
-        val trips: Long,
-        var username: String = " - ")
-    val leaderboard = remember { mutableStateListOf<RankRow>() }
+    val bg = if (darkModeEnabled) Color(0xFF1E1E1E) else Color.White
+    val fg = if (darkModeEnabled) Color.White else Color.Black
+    var showHelpDialog by remember { mutableStateOf(false) }
 
-
-    Surface(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(backgroundColor),
-        color = backgroundColor
-    ) {
+    Surface(Modifier.fillMaxSize().background(bg), color = bg) {
         Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(24.dp),
+            Modifier.fillMaxSize().padding(24.dp),
             verticalArrangement = Arrangement.SpaceBetween,
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Column(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                Box(modifier = Modifier.fillMaxWidth()) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Box(Modifier.fillMaxWidth()) {
+
                     Text(
                         "Settings",
                         fontSize = 32.sp,
                         fontWeight = FontWeight.Bold,
-                        color = textColor,
+                        color = fg,
                         modifier = Modifier.align(Alignment.Center)
                     )
-                    IconButton(
-                        onClick = {
-                            val uid = FirebaseAuth.getInstance().currentUser?.uid
-                            if (uid != null) {
-                                showScoreDialog = true
-                                isScoreLoading = true
 
-                                fetchUserStats(context) { trips, avg ->
-                                    totalTrips = trips
-                                    avgScore = avg
-                                    isScoreLoading = false
-                                }
-                            } else {
-                                Toast.makeText(context, "User not found", Toast.LENGTH_SHORT).show()
-                            }
-                        },
-                        modifier = Modifier.align(Alignment.TopEnd).size(32.dp)
+                    IconButton(
+                        onClick = { showLbDialog = true },
+                        modifier = Modifier.align(Alignment.CenterStart)
                     ) {
-                        Icon(
-                            painter = painterResource(id = R.drawable.info),
-                            contentDescription = "Info",
-                            tint = textColor
-                        )
+                        Image(painterResource(R.drawable.trofeu), contentDescription = "Clasament")
                     }
 
-                    IconButton(
-                            modifier = Modifier
-                                .align(Alignment.TopStart)
-                                .size(32.dp),
-                    onClick = {
-                        // 1. Deschidem dialogul instant
-                        showLeaderboardDialog = true
-                        isLeaderboardLoading  = true
-                        leaderboard.clear()
-
-                        // 2. Pornim încărcarea în background
-                        refreshAllUserStats {
-                            Firebase.firestore.collection("user-stats").get()
-                                .addOnSuccessListener { statsSnap ->
-                                    val tempRows = statsSnap.documents.mapNotNull { d ->
-                                        val trips = d.getLong("tripCount") ?: return@mapNotNull null
-                                        val total = d.getDouble("totalScore") ?: 0.0
-                                        RankRow(
-                                            uid    = d.id,
-                                            avg    = if (trips > 0) total / trips else 0.0,
-                                            trips  = trips
-                                        )
-                                    }
-
-                                    // ─ aducem username-urile
-                                    Firebase.firestore.collection("users").get()
-                                        .addOnSuccessListener { userSnap ->
-                                            val map = userSnap.documents.associate {
-                                                it.id to emailToUsername(it.getString("email"))
-                                            }
-
-                                            leaderboard.clear()
-                                            leaderboard.addAll(
-                                                tempRows
-                                                    .onEach { it.username = map[it.uid] ?: "-" }
-                                                    .sortedWith(
-                                                        compareByDescending<RankRow> { it.avg }
-                                                            .thenByDescending { it.trips }
-                                                            .thenBy { it.username.lowercase() }
-                                                    )
-                                            )
-                                            isLeaderboardLoading = false   // gata!
-                                        }
-                                }
+                    Row(
+                        modifier = Modifier.align(Alignment.CenterEnd),
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        IconButton(onClick = { showInfoDialog = true }) {
+                            Image(painterResource(R.drawable.info), contentDescription = "Statistici personale")
+                        }
+                        IconButton(onClick = { showHelpDialog = true }) {
+                            Image(painterResource(R.drawable.help), contentDescription = "Ghid utilizare")
                         }
                     }
-                    ) {
-                    Icon(
-                        painter = painterResource(id = R.drawable.trofeu),
-                        contentDescription = "Leaderboard",
-                        tint = textColor
-                    )
                 }
 
+                Spacer(Modifier.height(24.dp))
+                ProfileSection(user, fg)
+                Spacer(Modifier.height(8.dp))
+                AuthButtons(user, ctx, fg)
+                Spacer(Modifier.height(24.dp))
+
+                SettingToggle("🔔 Notificări", notificationsEnabled, fg) {
+                    notificationsEnabled = it
+                    prefs.edit().putBoolean("notifications_enabled", it).apply()
+                    if (!it) disableAllAppNotifications(ctx)
                 }
-
-                Spacer(modifier = Modifier.height(24.dp))
-
-                ProfileSection(user, textColor)
-                Spacer(modifier = Modifier.height(8.dp))
-
-                AuthButtons(user, context, textColor)
-                Spacer(modifier = Modifier.height(24.dp))
-
-                SettingToggle("🔔 Notifications", notificationsEnabled, textColor) { enabled ->
-                    notificationsEnabled = enabled
-                    prefs.edit().putBoolean("notifications_enabled", enabled).apply()
-
-                    if (enabled) {
-                        Toast.makeText(context, "Notificările au fost activate", Toast.LENGTH_SHORT).show()
-                    } else {
-                        disableAllAppNotifications(context)           // ⬅️ funcţie adăugată la pasul 3
-                        Toast.makeText(context, "Toate notificările au fost dezactivate", Toast.LENGTH_SHORT).show()
-                    }
-                }
-
-                SettingToggle("🌙 Dark Mode", darkModeEnabled, textColor) {
+                SettingToggle("🌙 Mod Întunecat", darkModeEnabled, fg) {
                     darkModeEnabled = it
                     prefs.edit().putBoolean("dark_mode", it).apply()
                 }
-
-                SettingToggle("📍 Location Tracking", locationTrackingEnabled, textColor) { enabled ->
-                    locationTrackingEnabled = enabled
-                    prefs.edit().putBoolean("location_tracking_enabled", enabled).apply()
-
-                    if (enabled) {
-                        Toast.makeText(context, "Tracking-ul locației a fost activat", Toast.LENGTH_SHORT).show()
-                    } else {
-                        disableAllAppNotifications(context)           // ⬅️ funcţie adăugată la pasul 3
-                        Toast.makeText(context, "Tracking-ul locației a fost dezactivat", Toast.LENGTH_SHORT).show()
-                    }
+                SettingToggle("📍 Locația actuală", locationTrackingEnabled, fg) {
+                    locationTrackingEnabled = it
+                    prefs.edit().putBoolean("location_tracking_enabled", it).apply()
+                    if (!it) disableAllAppNotifications(ctx)
                 }
-
             }
 
-            Column(modifier = Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+
                 Button(
-                    onClick = { showPasswordDialog = true },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 4.dp)
-                ) { Text("Change Password", color = textColor) }
+                    onClick = { showPwdDialog = true },
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
+                ) { Text("Schimbă Parola", color = fg) }
 
                 Button(
                     onClick = {
                         FirebaseAuth.getInstance().signOut()
-                        Toast.makeText(context, "Logged out", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(ctx, "Deconectare cu succes", Toast.LENGTH_SHORT).show()
                         onLogoutNavigateToSignUp()
                     },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 4.dp),
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = Color.Red)
-                ) { Text("Log Out", color = Color.White) }
+                ) { Text("Deconectare", color = Color.White) }
 
-                Spacer(modifier = Modifier.height(30.dp))
+                Spacer(Modifier.height(30.dp))
             }
         }
 
-        SettingsBottomNavigationBar(
-            onNavigateBack = onNavigateBack,
-            onNavigateToMapPage = onNavigateToMapPage,
-            onNavigateToGaragePage = onNavigateToGaragePage
-        )
+        SettingsBottomNavigationBar(onNavigateBack, onNavigateToMapPage, onNavigateToGaragePage)
 
-        if (showPasswordDialog) {
-            ChangePasswordDialog(user, context, textColor) {
-                showPasswordDialog = false
-            }
-        }
+        if (showPwdDialog)
+            ChangePasswordDialog(user, ctx, fg) { showPwdDialog = false }
 
-        if (showScoreDialog) {
+        if (showInfoDialog) {
             AlertDialog(
-                onDismissRequest = {
-                    showScoreDialog = false
-                    isScoreLoading = false
-                },
-                title = { Text("Scor utilizator", color = textColor) },
-                text = {
-                    if (isScoreLoading) {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            CircularProgressIndicator()
-                            Spacer(modifier = Modifier.height(8.dp))
-                            Text("Se încarcă…", color = textColor)
-                        }
-                    } else {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Text(
-                                String.format("%.1f/5 ⭐", avgScore),
-                                fontSize = 18.sp,
-                                fontWeight = FontWeight.Medium,
-                                color = textColor
-                            )
-                            Spacer(modifier = Modifier.height(8.dp))
-                            Text(
-                                "Total curse efectuate: $totalTrips",
-                                fontSize = 16.sp,
-                                color = textColor
-                            )
-                        }
+                onDismissRequest = { showInfoDialog = false },
+                containerColor = bg,
+                title = { Text("Statistici personale", color = fg) },
+                text  = {
+                    if (!infoLoaded) Text("Se încarcă…", color = fg)
+                    else Column {
+                        Text("Total curse: $tripCount", color = fg, fontSize = 14.sp)
+                        Text("Scor mediu: ${"%.2f".format(avgScore)} / 5", color = fg, fontSize = 14.sp)
                     }
                 },
                 confirmButton = {
-                    TextButton(
-                        onClick = {
-                            showScoreDialog = false
-                            isScoreLoading = false
-                        }
-                    ) {
-                        Text("Închide", color = textColor)
+                    TextButton(onClick = { showInfoDialog = false }) {
+                        Text("Închide", color = fg)
                     }
-                },
-                containerColor = backgroundColor
+                }
             )
         }
 
-        if (showLeaderboardDialog) if (showLeaderboardDialog) {
+        if (showLbDialog) {
             AlertDialog(
-                onDismissRequest = {
-                    showLeaderboardDialog = false
-                    isLeaderboardLoading  = false      // reset pt. următoarea deschidere
-                },
-                containerColor = backgroundColor,
-                title = { Text("Clasament utilizatori", color = textColor) },
+                onDismissRequest = { showLbDialog = false },
+                containerColor = bg,
+                title = { Text("Clasament utilizatori", color = fg) },
                 text = {
-                    when {
-                        isLeaderboardLoading -> {               // 🔄 spinner
-                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                CircularProgressIndicator()
-                                Spacer(Modifier.height(8.dp))
-                                Text("Se încarcă…", color = textColor)
-                            }
-                        }
-
-                        leaderboard.isEmpty() -> {              // fallback
-                            Text("Nicio înregistrare disponibilă", color = textColor)
-                        }
-
-                        else -> {                               // rezultatele
-                            var rank = 0
-                            var lastPair: Pair<Double, Long>? = null
-
-                            Column {
-                                leaderboard.forEachIndexed { index, row ->
-                                    val pair = row.avg to row.trips
-                                    if (pair != lastPair) rank = index + 1
-                                    lastPair = pair
-
-                                    Text(
-                                        "$rank.  ${row.username}  •  " +
-                                                "${"%.2f".format(row.avg)}/5  •  ${row.trips} curse",
-                                        color = textColor,
-                                        fontSize = 14.sp,
-                                        modifier = Modifier.padding(vertical = 2.dp)
-                                    )
-                                }
+                    if (!lbLoaded) Text("Se încarcă…", color = fg)
+                    else {
+                        var rank = 0; var last = -1.0
+                        Column {
+                            leaderboard.forEachIndexed { idx, row ->
+                                if (row.avg != last) rank = idx + 1
+                                last = row.avg
+                                Text(
+                                    "$rank.  ${row.username}  •  ${"%.2f".format(row.avg)} / 5  •  ${row.trips} curse",
+                                    color = fg, fontSize = 14.sp, modifier = Modifier.padding(vertical = 2.dp)
+                                )
                             }
                         }
                     }
                 },
                 confirmButton = {
-                    TextButton(
-                        onClick = {
-                            showLeaderboardDialog = false
-                            isLeaderboardLoading  = false
-                        }
-                    ) {
-                        Text("Închide", color = textColor)
+                    TextButton(onClick = { showLbDialog = false }) {
+                        Text("Închide", color = fg)
+                    }
+                }
+            )
+        }
+
+        if (showHelpDialog) {
+
+            val scroll = rememberScrollState()
+
+            AlertDialog(
+                onDismissRequest = { showHelpDialog = false },
+                containerColor   = bg,
+                title = { Text("Ghid rapid de utilizare", color = fg) },
+
+                text = {
+                    Column(Modifier.verticalScroll(scroll)) {
+
+                        Text("🚙  Home", color = fg, fontWeight = FontWeight.Bold)
+                        Text("• Conectare OBD – buton „Connect to OBD”.",  color = fg)
+                        Text("• Vizualizare date live (RPM, viteză, consum).", color = fg)
+                        Text("• Citire / ștergere coduri eroare ECU.", color = fg)
+                        Text("• Adăugare / selectare mașină.", color = fg)
+                        Spacer(Modifier.height(8.dp))
+
+                        Text("🗺️  Map", color = fg, fontWeight = FontWeight.Bold)
+                        Text("• Căutare locație și afișare pe hartă.", color = fg)
+                        Text("• Adăugare locație favorită ⭐.", color = fg)
+                        Text("• Detectare mișcare: 🚫 No-Move, 🚶 Walking, 🚗 Drive.", color = fg)
+                        Text("• Ultimele 10 curse cu scor, viteză max și traseu.", color = fg)
+                        Spacer(Modifier.height(8.dp))
+
+                        Text("🚗  Garage", color = fg, fontWeight = FontWeight.Bold)
+                        Text("• Adaugă / editează date: Rovinietă, ITP, RCA.", color = fg)
+                        Text("• Buton ℹ️ deschide dialog pentru detalii service / note.", color = fg)
+                        Text("• Setează ora notificării de expirare.", color = fg)
+                        Spacer(Modifier.height(8.dp))
+
+                        Text("⚙️  Settings", color = fg, fontWeight = FontWeight.Bold)
+                        Text("• 🏆 Clasament – scor mediu + nr. curse.", color = fg)
+                        Text("• ℹ️ Info – statistici personale instant.", color = fg)
+                        Text("• Resetare / schimbare parolă.", color = fg)
+                        Text("• Verificare email.", color = fg)
+                        Text("• Schimbare poză de profil.", color = fg)
+                        Text("• Dark-mode, notificări, location-tracking.", color = fg)
+                        Spacer(Modifier.height(8.dp))
+
+                        Text("📈  Scorul călătoriilor", color = fg, fontWeight = FontWeight.Bold)
+                        Text("• Pornim de la 5.0 per călătorie.", color = fg)
+                        Text("• 🚀 Accelerare bruscă – penalizare −0.1.", color = fg)
+                        Text("• 🛑 Frânare bruscă – penalizare −0.1.", color = fg)
+                    }
+                },
+
+                confirmButton = {
+                    TextButton(onClick = { showHelpDialog = false }) {
+                        Text("Închide", color = fg)
                     }
                 }
             )
         }
     }
 }
+
 
 @Composable
 fun ProfileSection(user: FirebaseUser?, textColor: Color) {
@@ -445,7 +357,7 @@ fun ProfileSection(user: FirebaseUser?, textColor: Color) {
                     .appendQueryParameter("ts", System.currentTimeMillis().toString())
                     .build()
             } catch (e: Exception) {
-                Toast.makeText(context, "Failed to save image", Toast.LENGTH_SHORT).show()
+                Toast.makeText(context, "Eroare la salvarea imaginii", Toast.LENGTH_SHORT).show()
             }
         }
     }
@@ -464,7 +376,7 @@ fun ProfileSection(user: FirebaseUser?, textColor: Color) {
         )
         Spacer(modifier = Modifier.height(8.dp))
         Button(onClick = { launcher.launch("image/*") }) {
-            Text("Select Profile Picture", color = textColor)
+            Text("Selectează o Imagine de Profil", color = textColor)
         }
         Spacer(modifier = Modifier.height(12.dp))
         Text(
@@ -474,7 +386,7 @@ fun ProfileSection(user: FirebaseUser?, textColor: Color) {
         )
         Spacer(modifier = Modifier.height(4.dp))
         Text(
-            text = if (user?.isEmailVerified == true) "Email Verified ✅" else "Email Not Verified ❌",
+            text = if (user?.isEmailVerified == true) "Email Verificat ✅" else "Email Neverificat ❌",
             color = if (user?.isEmailVerified == true) Color.Green else Color.Red,
             fontSize = 14.sp
         )
@@ -488,14 +400,14 @@ fun AuthButtons(user: FirebaseUser?, context: Context, textColor: Color) {
             onClick = {
                 user.sendEmailVerification().addOnCompleteListener {
                     if (it.isSuccessful)
-                        Toast.makeText(context, "Verification email sent", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(context, "Email-ul de verificare a fost trimis", Toast.LENGTH_SHORT).show()
                     else
-                        Toast.makeText(context, "Failed to send verification email", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(context, "Eroare la trimiterea email-ului de verificare", Toast.LENGTH_SHORT).show()
                 }
             },
             modifier = Modifier.fillMaxWidth()
         ) {
-            Text("Verify Email", color = textColor)
+            Text("Verifică Email-ul", color = textColor)
         }
         Spacer(modifier = Modifier.height(8.dp))
     }
@@ -505,16 +417,16 @@ fun AuthButtons(user: FirebaseUser?, context: Context, textColor: Color) {
             user?.email?.let { email ->
                 FirebaseAuth.getInstance().sendPasswordResetEmail(email)
                     .addOnSuccessListener {
-                        Toast.makeText(context, "Password reset email sent", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(context, "Email-ul de resetare a parolei a fost trimis", Toast.LENGTH_SHORT).show()
                     }
                     .addOnFailureListener {
-                        Toast.makeText(context, "Error: ${it.message}", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(context, "Eroare: ${it.message}", Toast.LENGTH_SHORT).show()
                     }
             }
         },
         modifier = Modifier.fillMaxWidth()
     ) {
-        Text("Reset Password", color = textColor)
+        Text("Resetează Parola", color = textColor)
     }
 }
 
@@ -526,25 +438,25 @@ fun ChangePasswordDialog(user: FirebaseUser?, context: Context, textColor: Color
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Change Password", color = textColor) },
+        title = { Text("Schimbă Parola", color = textColor) },
         text = {
             Column {
                 OutlinedTextField(
                     value = oldPassword,
                     onValueChange = { oldPassword = it },
-                    label = { Text("Current Password", color = textColor) },
+                    label = { Text("Parola curentă", color = textColor) },
                     modifier = Modifier.fillMaxWidth()
                 )
                 OutlinedTextField(
                     value = newPassword,
                     onValueChange = { newPassword = it },
-                    label = { Text("New Password", color = textColor) },
+                    label = { Text("Noua Parolă", color = textColor) },
                     modifier = Modifier.fillMaxWidth()
                 )
                 OutlinedTextField(
                     value = confirmPassword,
                     onValueChange = { confirmPassword = it },
-                    label = { Text("Confirm New Password", color = textColor) },
+                    label = { Text("Confirmă noua parolă", color = textColor) },
                     modifier = Modifier.fillMaxWidth()
                 )
             }
@@ -552,7 +464,7 @@ fun ChangePasswordDialog(user: FirebaseUser?, context: Context, textColor: Color
         confirmButton = {
             Button(onClick = {
                 if (newPassword != confirmPassword) {
-                    Toast.makeText(context, "Passwords do not match", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(context, "Parolele nu se potrivesc", Toast.LENGTH_SHORT).show()
                     return@Button
                 }
 
@@ -563,24 +475,24 @@ fun ChangePasswordDialog(user: FirebaseUser?, context: Context, textColor: Color
                         .addOnSuccessListener {
                             user.updatePassword(newPassword)
                                 .addOnSuccessListener {
-                                    Toast.makeText(context, "Password updated successfully", Toast.LENGTH_SHORT).show()
+                                    Toast.makeText(context, "Parola a fost actualizată cu succes", Toast.LENGTH_SHORT).show()
                                     onDismiss()
                                 }
                                 .addOnFailureListener {
-                                    Toast.makeText(context, "Update failed: ${it.message}", Toast.LENGTH_SHORT).show()
+                                    Toast.makeText(context, "Eroare la actualizare: ${it.message}", Toast.LENGTH_SHORT).show()
                                 }
                         }
                         .addOnFailureListener {
-                            Toast.makeText(context, "Wrong current password", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(context, "Parola curentă e greșită", Toast.LENGTH_SHORT).show()
                         }
                 }
             }) {
-                Text("Save", color = textColor)
+                Text("Salvare", color = textColor)
             }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) {
-                Text("Cancel", color = textColor)
+                Text("Anulare", color = textColor)
             }
         }
     )
@@ -626,7 +538,7 @@ fun SettingsBottomNavigationBar(
             IconButton(onClick = onNavigateToGaragePage, modifier = Modifier.size(50.dp)) {
                 Icon(painter = painterResource(id = R.drawable.garage), contentDescription = "Garage", tint = Color.LightGray)
             }
-            IconButton(onClick = { /* Already on Settings */ }, modifier = Modifier.size(50.dp)) {
+            IconButton(onClick = {  }, modifier = Modifier.size(50.dp)) {
                 Icon(painter = painterResource(id = R.drawable.settings), contentDescription = "Settings", tint = Color.Black)
             }
         }

@@ -47,7 +47,7 @@ import java.util.concurrent.TimeUnit
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.work.OneTimeWorkRequestBuilder
 
-// ExpiryCheckWorker.kt
+
 class ExpiryCheckWorker(
     ctx: Context,
     params: WorkerParameters
@@ -84,7 +84,6 @@ class ExpiryCheckWorker(
                 }
             }
 
-
             check("Rovinieta",       car.rovinietaDate, "ROV")
             check("Asigurarea RCA",  car.insuranceDate, "RCA")
             check("ITP-ul",          car.itpDate,       "ITP")
@@ -119,8 +118,6 @@ class ExpiryCheckWorker(
                 == PackageManager.PERMISSION_GRANTED) {
                 nm.notify(id, notif)
             } else {
-                // Aici poți ignora notificarea sau cere permisiunea în UI
-                // (doar Activitățile pot cere permisiuni, nu WorkManager!)
                 Log.w("Notif", "Permisiunea POST_NOTIFICATIONS nu e acordată.")
             }
         } else {
@@ -171,7 +168,6 @@ fun GaragePage(
     var itpDate by remember { mutableStateOf("") }
     var notes by remember { mutableStateOf("") }
 
-    // variabilă state
     var reminderTime by remember {
         mutableStateOf(prefs.getString("reminder_time", "09:00")!!)
     }
@@ -180,19 +176,15 @@ fun GaragePage(
         val prefs = ctx.getSharedPreferences("settings", Context.MODE_PRIVATE)
         val time    = prefs.getString("reminder_time", "09:00") ?: "09:00"
         val (h, m)  = time.split(":").map { it.toInt() }
-
-        // calculăm offsetul până la următoarea execuție
         val calNow  = Calendar.getInstance()
         val calNext = Calendar.getInstance().apply {
             set(Calendar.HOUR_OF_DAY, h)
             set(Calendar.MINUTE, m)
             set(Calendar.SECOND, 0)
             if (before(calNow)) {
-                // ora selectată a trecut – pornim worker-ul imediat,
-                // apoi îl programăm pentru ziua următoare la aceeași oră
                 WorkManager.getInstance(ctx).enqueue(
                     OneTimeWorkRequestBuilder<ExpiryCheckWorker>()
-                        .setInitialDelay(1, TimeUnit.MINUTES)  // rulează peste ~1 minut
+                        .setInitialDelay(1, TimeUnit.MINUTES)
                         .build()
                 )
                 add(Calendar.DAY_OF_YEAR, 1)
@@ -205,7 +197,7 @@ fun GaragePage(
             .setInitialDelay(initialDelay, TimeUnit.MILLISECONDS)
             .setConstraints(
                 Constraints.Builder()
-                    .setRequiredNetworkType(NetworkType.CONNECTED)  // citește Firestore
+                    .setRequiredNetworkType(NetworkType.CONNECTED)
                     .build()
             )
             .build()
@@ -268,13 +260,12 @@ fun GaragePage(
         Spacer(modifier = Modifier.height(24.dp))
 
         selectedCar?.let {
-            Text("Selected Car: ${it.brand} ${it.model}", fontSize = 18.sp, color = textColor)
+            Text("Mașina selectată: ${it.brand} ${it.model}", fontSize = 18.sp, color = textColor)
         }
 
         Spacer(modifier = Modifier.height(24.dp))
 
         Button(onClick = {
-            // Android 13+ → cerem permisiunea dacă nu există
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
                 ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS)
                 != PackageManager.PERMISSION_GRANTED) {
@@ -287,7 +278,7 @@ fun GaragePage(
                 { _, h, m ->
                     reminderTime = "%02d:%02d".format(h, m)
                     prefs.edit().putString("reminder_time", reminderTime).apply()
-                    scheduleExpiryWorker(context)            // pornește / actualizează job-ul
+                    scheduleExpiryWorker(context)
                     Toast.makeText(context, "Reminder set la $reminderTime", Toast.LENGTH_SHORT).show()
                 },
                 reminderTime.substring(0, 2).toInt(),
@@ -302,7 +293,7 @@ fun GaragePage(
         Spacer(modifier = Modifier.height(24.dp))
 
         if (cars.isEmpty()) {
-            Text("No cars added yet.", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = textColor)
+            Text("Nicio mașină nu a fost adăugată", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = textColor)
         } else {
             cars.sortedBy { it.brand }.forEach { car ->
                 val isSelected = (selectedCar?.id == car.id)
@@ -322,8 +313,8 @@ fun GaragePage(
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
                         Text("${car.brand} ${car.model}", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = textColor)
-                        Text("Year: ${car.year}", fontSize = 16.sp, color = textColor)
-                        Text("Plate: ${car.licensePlate}", fontSize = 16.sp, color = textColor)
+                        Text("An: ${car.year}", fontSize = 16.sp, color = textColor)
+                        Text("Nr: ${car.licensePlate}", fontSize = 16.sp, color = textColor)
                     }
                     IconButton(onClick = {
                         carToView = car
@@ -362,12 +353,12 @@ fun GaragePage(
                 showEditDialog = false
                 carToEdit = null
             },
-            title = { Text("Edit Car", color = textColor) },
+            title = { Text("Editează Mașina", color = textColor) },
             text = {
                 Column {
-                    OutlinedTextField(value = editedBrand, onValueChange = { editedBrand = it }, label = { Text("Brand", color = textColor) }, singleLine = true)
+                    OutlinedTextField(value = editedBrand, onValueChange = { editedBrand = it }, label = { Text("Marcă", color = textColor) }, singleLine = true)
                     OutlinedTextField(value = editedModel, onValueChange = { editedModel = it }, label = { Text("Model", color = textColor) }, singleLine = true)
-                    OutlinedTextField(value = editedYear, onValueChange = { editedYear = it }, label = { Text("Year", color = textColor) }, singleLine = true, keyboardOptions = KeyboardOptions.Default.copy(keyboardType = KeyboardType.Number))
+                    OutlinedTextField(value = editedYear, onValueChange = { editedYear = it }, label = { Text("An", color = textColor) }, singleLine = true, keyboardOptions = KeyboardOptions.Default.copy(keyboardType = KeyboardType.Number))
                 }
             },
             confirmButton = {

@@ -127,7 +127,6 @@ class BluetoothManager(private val context: Context) {
                         if (!foundDevices.any { it.address == device.address }) {
                             foundDevices.add(device)
 
-                            // Verificare suplimentară de permisiuni pentru device.name și device.address
                             try {
                                 val name = device.name ?: "Necunoscut"
                                 val address = device.address ?: "Necunoscut"
